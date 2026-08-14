@@ -100,7 +100,7 @@ def _probe_game(session: auth.GameSession, timeout: float) -> int:
         data = b""
         try:
             data = mc._recv_some()
-        except Exception as exc:  # no immediate reply is expected
+        except OSError as exc:  # no immediate reply is expected
             print(f"  (no immediate reply: {exc!r})")
         print("  sent OP_LOGIN 0xF1")
         if data:
