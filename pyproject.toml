@@ -1,0 +1,30 @@
+[project]
+name = "aoeo-market"
+version = "0.1.0"
+description = "Market observer for Age Of Empires Online"
+readme =  {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.13"
+dependencies = [
+    "lxml>=6.1.1",
+    "scapy>=2.7.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.12.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 159
+target-version = "py313"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
