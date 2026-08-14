@@ -31,6 +31,7 @@ from typing import Self
 
 from .constants import CELESTE_NETWORK_HOST, CELESTE_NETWORK_PORT
 
+
 def build_login_tail(ip: str) -> bytes:
     """Build the 12-byte login tail for a given local IPv4 address.
 
