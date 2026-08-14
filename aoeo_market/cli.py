@@ -44,6 +44,7 @@ def _probe(args: argparse.Namespace) -> int:
     from .live_probe import probe
 
     return probe(
+        local_ip=args.local_ip,
         mail=args.email,
         password=args.password,
         host=args.host,
@@ -70,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     pr = sub.add_parser(
         "probe", help="attempt a live connection to the game backend"
     )
+    pr.add_argument("--local-ip", required=True, help="your local IPv4 address")
     pr.add_argument("--email", help="account email (or $AOEO_EMAIL)")
     pr.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
     pr.add_argument(

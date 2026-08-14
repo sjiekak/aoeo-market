@@ -98,7 +98,7 @@ class MarketClient:
         return self._sock.recv(65536)
 
     # -- auth -------------------------------------------------------------
-    def acquire_session(self, mail: str, password: str) -> Session:
+    def acquire_session(self, mail: str, password: str, local_ip: str) -> Session:
         """Log in over the Celeste Network (TCP 4564) and return a Session.
 
         Mirrors what the game does: send email + password in a plaintext login
@@ -109,7 +109,7 @@ class MarketClient:
 
         cn = auth.CelesteNetworkClient()
         try:
-            gs = cn.login(mail, password)
+            gs = cn.login(mail, password, local_ip)
         finally:
             cn.close()
         return Session(xuid=gs.xuid, username=gs.username, token=gs.token)
