@@ -47,15 +47,21 @@ with the same 8-byte header; all multi-byte integers are little-endian:
 |      Password length (LE)     |           Password            |
 :                            (variable)                         :
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                Fingerprint tail (12 bytes)                    |
-:                                                               :
+| 0x45 |              opaque (3 bytes)                          |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               Local IPv4 (4 bytes, network order)             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| 0x40 |              zeros (3 bytes)                           |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |           Device hash (64 ASCII hex chars = 64 bytes)         |
 :                                                               :
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-The email and password are sent **in plaintext**.
+The email and password are sent **in plaintext**. The 12-byte tail is built
+by `build_login_tail(local_ip)`: `0x45`, three opaque bytes, the caller's
+local IPv4 address (network byte order), `0x40`, then three zero bytes. The
+opaque bytes are stable per install and are replayed verbatim.
 
 ### Login response — server → client (id = 1)
 
@@ -114,10 +120,10 @@ game-service login (`client.MarketClient.login`, channel 0x0101 opcode 0xF1).
 login bytes. What remains is validating the full round-trip against the live
 servers (no live run has been performed from this environment):
 
-1. **Live-test the 4564 login** — `MarketClient.acquire_session(mail, password)`
-   should return `xuid`/`username`/`token`. The trailing device-fingerprint
-   bytes are replayed from the capture; if the server rejects them, that blob
-   needs regenerating.
+1. **Live-test the 4564 login** — `MarketClient.acquire_session(mail, password,
+   local_ip)` should return `xuid`/`username`/`token`. The login tail is built
+   from `local_ip`; the device hash is still replayed from the capture, so if
+   the server rejects it that blob needs regenerating.
 2. **Complete the 1510 login handshake** — the short control exchange around the
    `0xF1` frame (opcodes `0xf2/0xff/0xfe/0x91/0x92` appear in the login capture)
    is still only partially reversed in `client.login()`. Finish from a fresh

@@ -44,6 +44,7 @@ def resolve_credentials(
 
 
 def probe(
+    local_ip: str,
     mail: str | None = None,
     password: str | None = None,
     host: str | None = None,
@@ -59,7 +60,7 @@ def probe(
     print(f"Connecting to Celeste Network {host}:{port} ...", file=sys.stderr)
     cn = auth.CelesteNetworkClient(host=host, port=port, timeout=timeout)
     try:
-        session = cn.login(mail, password)
+        session = cn.login(mail, password, local_ip)
         manifest_received = cn.manifest_received
     finally:
         cn.close()
@@ -120,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="aoeo_market.live_probe",
         description="Attempt a real connection to the Celeste game backend.",
     )
+    p.add_argument("--local-ip", required=True, help="your local IPv4 address")
     p.add_argument("--email", help="account email (or $AOEO_EMAIL)")
     p.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
     p.add_argument("--host", default=CELESTE_NETWORK_HOST)
@@ -132,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     return probe(
+        local_ip=args.local_ip,
         mail=args.email,
         password=args.password,
         host=args.host,

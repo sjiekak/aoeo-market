@@ -23,6 +23,7 @@ game-service login (``client.MarketClient.login``, channel 0x0101 opcode 0xF1).
 
 from __future__ import annotations
 
+import ipaddress
 import socket
 import struct
 from dataclasses import dataclass
@@ -30,11 +31,19 @@ from typing import Self
 
 from .constants import CELESTE_NETWORK_HOST, CELESTE_NETWORK_PORT
 
-# The 12 opaque bytes between the password and the device hash in the observed
-# login request. Reconstructed as: 0x45 | two 32-bit LE words (public/local
-# IP-ish values) | 3 zero bytes. They are stable for a given install, so we
-# replay the captured bytes rather than attempting to regenerate them.
-_LOGIN_TAIL = bytes.fromhex("458e0d1ec0a8012540000000")
+
+def build_login_tail(ip: str) -> bytes:
+    """Build the 12-byte login tail for a given local IPv4 address.
+
+    Layout: 0x45 | 3 opaque bytes | local IPv4 (network order) | 1 opaque
+    byte | 3 zero bytes. The opaque bytes are stable for a given install and
+    are replayed verbatim.
+    """
+    return (
+        b"\x45\x8e\x0d\x1e"
+        + ipaddress.IPv4Address(ip).packed
+        + b"\x40\x00\x00\x00"
+    )
 
 # 64-hex-char (32-byte) machine/install fingerprint from the capture.
 DEVICE_HASH = (
@@ -59,7 +68,10 @@ def _len_prefixed(data: bytes) -> bytes:
 
 
 def build_login_request(
-    mail: str, password: str, device_hash: str = DEVICE_HASH
+    mail: str,
+    password: str,
+    local_ip: str,
+    device_hash: str = DEVICE_HASH,
 ) -> bytes:
     """Build the packet-1 login request body + header for the 4564 service."""
     if len(device_hash) != 64:
@@ -70,7 +82,7 @@ def build_login_request(
         + struct.pack("<I", 2018)  # client/protocol version constant
         + _len_prefixed(mail.encode("utf-8"))
         + _len_prefixed(password.encode("utf-8"))
-        + _LOGIN_TAIL
+        + build_login_tail(local_ip)
         + device_hash.encode("ascii")
     )
     return _HEADER.pack(1, 8 + len(body)) + body
@@ -176,6 +188,7 @@ class CelesteNetworkClient:
         self,
         mail: str,
         password: str,
+        local_ip: str,
         device_hash: str = DEVICE_HASH,
     ) -> GameSession:
         """Authenticate with email + password and return the game session.
@@ -191,7 +204,7 @@ class CelesteNetworkClient:
         self.connect()
         try:
             self._sock.sendall(
-                build_login_request(mail, password, device_hash)
+                build_login_request(mail, password, local_ip, device_hash)
             )
             pid, body = self._recv_packet()
             if pid != 1:
