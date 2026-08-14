@@ -35,6 +35,11 @@ def _field(body: bytes, tag: str) -> str | None:
     return m.group(1).decode("utf-8", "replace") if m else None
 
 
+def _get(body: bytes, tag: str, default: int | str = 0) -> int | str:
+    v = _field(body, tag)
+    return v if v is not None else default
+
+
 @dataclass(frozen=True)
 class Listing:
     transaction_id: int
@@ -60,23 +65,19 @@ def parse_listings(data: bytes) -> list[Listing]:
     for m in _RECORD_RE.finditer(data):
         body = m.group("body")
 
-        def g(tag: str, default: int | str = 0) -> int | str:
-            v = _field(body, tag)
-            return v if v is not None else default
-
         try:
             out.append(
                 Listing(
                     transaction_id=int(_field(body, "TransactionId")),
                     seller_empire_id=int(m.group("seller")),
-                    buyer_character_id=int(g("BuyerCharacterId", -1)),
-                    item_id=str(g("ItemID", "")),
-                    item_type=str(g("ItemType", "")),
-                    item_level=int(g("ItemLevel", 0)),
-                    item_count=int(g("ItemCount", 1)),
-                    item_price=int(g("ItemPrice", 0)),
-                    item_seed=int(g("ItemSeed", 0)),
-                    seconds_till_expiry=int(g("SecondsTillExpiry", 0)),
+                    buyer_character_id=int(_get(body, "BuyerCharacterId", -1)),
+                    item_id=str(_get(body, "ItemID", "")),
+                    item_type=str(_get(body, "ItemType", "")),
+                    item_level=int(_get(body, "ItemLevel", 0)),
+                    item_count=int(_get(body, "ItemCount", 1)),
+                    item_price=int(_get(body, "ItemPrice", 0)),
+                    item_seed=int(_get(body, "ItemSeed", 0)),
+                    seconds_till_expiry=int(_get(body, "SecondsTillExpiry", 0)),
                 )
             )
         except (TypeError, ValueError):

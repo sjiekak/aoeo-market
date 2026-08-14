@@ -26,6 +26,7 @@ from __future__ import annotations
 import socket
 import struct
 from dataclasses import dataclass
+from typing import Self
 
 from .constants import CELESTE_NETWORK_HOST, CELESTE_NETWORK_PORT
 
@@ -131,7 +132,7 @@ class CelesteNetworkClient:
         self._sock: socket.socket | None = None
         self.manifest_received = False
 
-    def __enter__(self) -> CelesteNetworkClient:
+    def __enter__(self) -> Self:
         self.connect()
         return self
 

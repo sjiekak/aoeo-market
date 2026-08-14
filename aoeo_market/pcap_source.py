@@ -37,9 +37,14 @@ def reassemble_s2c(path: str | os.PathLike, server: str = GAME_SERVER_HOST,
     pkts = rdpcap(_maybe_gunzip(path))
     segs: list[tuple[int, bytes]] = []
     for p in pkts:
-        if IP in p and TCP in p and Raw in p:
-            if p[IP].src == server and p[TCP].sport == port:
-                segs.append((p[TCP].seq, bytes(p[Raw].load)))
+        if (
+            IP in p
+            and TCP in p
+            and Raw in p
+            and p[IP].src == server
+            and p[TCP].sport == port
+        ):
+            segs.append((p[TCP].seq, bytes(p[Raw].load)))
     segs.sort()
     seen: set[int] = set()
     data = b""
