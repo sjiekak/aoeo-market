@@ -60,27 +60,40 @@ class Listing:
 
 def parse_listings(data: bytes) -> list[Listing]:
     """Extract every ``MarketPlaceItemInfo`` record from a decompressed message
-    (or from a concatenation of several)."""
-    out: list[Listing] = []
-    for m in _RECORD_RE.finditer(data):
-        body = m.group("body")
+    (or from a concatenation of several).
 
-        try:
-            out.append(
-                Listing(
-                    transaction_id=int(_field(body, "TransactionId")),
-                    seller_empire_id=int(m.group("seller")),
-                    buyer_character_id=int(_get(body, "BuyerCharacterId", -1)),
-                    item_id=str(_get(body, "ItemID", "")),
-                    item_type=str(_get(body, "ItemType", "")),
-                    item_level=int(_get(body, "ItemLevel", 0)),
-                    item_count=int(_get(body, "ItemCount", 1)),
-                    item_price=int(_get(body, "ItemPrice", 0)),
-                    item_seed=int(_get(body, "ItemSeed", 0)),
-                    seconds_till_expiry=int(_get(body, "SecondsTillExpiry", 0)),
+    Server messages arrive both as UTF-8 XML (the offline captures) and as
+    UTF-16-LE XML with a BOM (the live login's ``<Empire><Offers>`` document),
+    so the records are matched in the raw bytes and again in a NUL-stripped
+    copy of them (which collapses UTF-16-LE ASCII markup to plain ASCII).
+    Results are deduplicated by transaction id.
+    """
+    out: list[Listing] = []
+    seen: set[int] = set()
+    for corpus in (data, data.replace(b"\x00", b"")):
+        for m in _RECORD_RE.finditer(corpus):
+            body = m.group("body")
+
+            try:
+                tx = int(_field(body, "TransactionId"))
+                if tx in seen:
+                    continue
+                seen.add(tx)
+                out.append(
+                    Listing(
+                        transaction_id=tx,
+                        seller_empire_id=int(m.group("seller")),
+                        buyer_character_id=int(_get(body, "BuyerCharacterId", -1)),
+                        item_id=str(_get(body, "ItemID", "")),
+                        item_type=str(_get(body, "ItemType", "")),
+                        item_level=int(_get(body, "ItemLevel", 0)),
+                        item_count=int(_get(body, "ItemCount", 1)),
+                        item_price=int(_get(body, "ItemPrice", 0)),
+                        item_seed=int(_get(body, "ItemSeed", 0)),
+                        seconds_till_expiry=int(_get(body, "SecondsTillExpiry", 0)),
+                    )
                 )
-            )
-        except (TypeError, ValueError):
-            # Skip records missing the primary key; keep parsing the rest.
-            continue
+            except (TypeError, ValueError):
+                # Skip records missing the primary key; keep parsing the rest.
+                continue
     return out

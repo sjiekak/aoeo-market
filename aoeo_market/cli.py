@@ -1,7 +1,7 @@
 """Command-line entry points.
 
-    uv run python -m aoeo_market.cli dump   <capture>   # list all listings
-    uv run python -m aoeo_market.cli replay <capA> <capB># diff two snapshots -> events
+uv run python -m aoeo_market.cli dump   <capture>   # list all listings
+uv run python -m aoeo_market.cli replay <capA> <capB># diff two snapshots -> events
 """
 
 from __future__ import annotations
@@ -19,8 +19,10 @@ def _dump(args: argparse.Namespace) -> int:
     print(f"{len(listings)} active listings\n")
     print(f"{'ITEM_ID':28} {'TYPE':9} {'LVL':>3} {'CNT':>3} {'PRICE':>8} {'EXPIRES(d)':>10}  SELLER")
     for l in listings:
-        print(f"{l.item_id:28.28} {l.item_type:9.9} {l.item_level:3d} {l.item_count:3d} "
-              f"{l.item_price:8d} {l.seconds_till_expiry/86400:10.1f}  {l.seller_empire_id}")
+        print(
+            f"{l.item_id:28.28} {l.item_type:9.9} {l.item_level:3d} {l.item_count:3d} "
+            f"{l.item_price:8d} {l.seconds_till_expiry / 86400:10.1f}  {l.seller_empire_id}"
+        )
     return 0
 
 
@@ -68,26 +70,30 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--gap", type=float, default=3600.0, help="seconds between snapshots")
     r.set_defaults(func=_replay)
 
-    pr = sub.add_parser(
-        "probe", help="attempt a live connection to the game backend"
-    )
+    pr = sub.add_parser("probe", help="attempt a live connection to the game backend")
     pr.add_argument("--local-ip", required=True, help="your local IPv4 address")
     pr.add_argument("--email", help="account email (or $AOEO_EMAIL)")
     pr.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
     pr.add_argument(
-        "--host", default=CELESTE_NETWORK_HOST,
+        "--host",
+        default=CELESTE_NETWORK_HOST,
         help=f"Celeste Network host (default {CELESTE_NETWORK_HOST})",
     )
     pr.add_argument(
-        "--port", type=int, default=CELESTE_NETWORK_PORT,
+        "--port",
+        type=int,
+        default=CELESTE_NETWORK_PORT,
         help=f"Celeste Network port (default {CELESTE_NETWORK_PORT})",
     )
     pr.add_argument(
-        "--timeout", type=float, default=15.0,
+        "--timeout",
+        type=float,
+        default=15.0,
         help="socket timeout in seconds",
     )
     pr.add_argument(
-        "--game", action="store_true",
+        "--game",
+        action="store_true",
         help="also attempt the TCP 1510 login handshake",
     )
     pr.set_defaults(func=_probe)

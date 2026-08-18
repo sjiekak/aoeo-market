@@ -30,20 +30,13 @@ def _maybe_gunzip(path: str | os.PathLike) -> str:
     return str(out)
 
 
-def reassemble_s2c(path: str | os.PathLike, server: str = GAME_SERVER_HOST,
-                   port: int = GAME_SERVER_PORT) -> bytes:
+def reassemble_s2c(path: str | os.PathLike, server: str = GAME_SERVER_HOST, port: int = GAME_SERVER_PORT) -> bytes:
     """Concatenate server->client payloads on the game-service stream, ordered by
     TCP sequence number (deduplicating retransmits)."""
     pkts = rdpcap(_maybe_gunzip(path))
     segs: list[tuple[int, bytes]] = []
     for p in pkts:
-        if (
-            IP in p
-            and TCP in p
-            and Raw in p
-            and p[IP].src == server
-            and p[TCP].sport == port
-        ):
+        if IP in p and TCP in p and Raw in p and p[IP].src == server and p[TCP].sport == port:
             segs.append((p[TCP].seq, bytes(p[Raw].load)))
     segs.sort()
     seen: set[int] = set()
@@ -56,8 +49,7 @@ def reassemble_s2c(path: str | os.PathLike, server: str = GAME_SERVER_HOST,
     return data
 
 
-def listings_from_pcap(path: str | os.PathLike, server: str = GAME_SERVER_HOST,
-                       port: int = GAME_SERVER_PORT) -> list[Listing]:
+def listings_from_pcap(path: str | os.PathLike, server: str = GAME_SERVER_HOST, port: int = GAME_SERVER_PORT) -> list[Listing]:
     """All marketplace listings found anywhere in a capture (deduped by tx id)."""
     data = reassemble_s2c(path, server, port)
     merged = b"".join(out for _, out in iter_zlib_members(data))
