@@ -28,11 +28,11 @@ The backend may allow only one live session per account. If so, run EITHER the
 game OR this client, not both at once, or you may get disconnected. A read-only
 poller that logs in as its own (possibly dedicated) account is the clean setup.
 
-The login *handshake* (the small control frames the server expects around the
-0xF1 login frame) is only partially reversed from a single capture; the pieces
-that are certain (framing, login field layout, market query, response parsing)
-are implemented, and the handshake steps are marked TODO with the captured
-reference bytes so they can be completed against a fresh capture.
+The 1510 login handshake was fully reversed from two independent captures
+(2026-08-10 and 2026-08-17): :meth:`login` replays the exact frame and
+message sequence the game sends (see :func:`aoeo_market.protocol
+.build_login_bundle`), and the market polling reuses the offline zlib-scanning
+pipeline verified against the captures.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class MarketClient:
 
     _sock: socket.socket | None = field(default=None, init=False)
     _rx: bytes = field(default=b"", init=False)
-    _seq: int = field(default=0x34, init=False)  # continues the counter series
+    _ctr: int = field(default=1, init=False)  # per-connection message counter
     _ctx: bytes = field(default=b"\x00" * 8, init=False)
 
     # -- connection -------------------------------------------------------
@@ -83,14 +83,14 @@ class MarketClient:
             self._sock.close()
             self._sock = None
 
-    def _next_seq(self) -> int:
-        s = self._seq
-        self._seq += 1
+    def _next_ctr(self) -> int:
+        s = self._ctr
+        self._ctr += 1
         return s
 
     def _send(self, channel: int, opcode: int, payload: bytes) -> None:
         assert self._sock is not None
-        frame = proto.Frame(self._ctx, channel, opcode, payload).encode()
+        frame = proto.Frame(self._ctx, channel, opcode, payload, self._next_ctr()).encode()
         self._sock.sendall(frame)
 
     def _recv_some(self) -> bytes:
@@ -114,31 +114,72 @@ class MarketClient:
             cn.close()
         return Session(xuid=gs.xuid, username=gs.username, token=gs.token)
 
-    def login(self, session: Session) -> None:
-        """Perform the 1510 login handshake and authenticate the session."""
-        payload = proto.build_login_payload(session.xuid, session.username, session.token)
-        # TODO: the captured login used channel 0x0101, opcode 0xF1, and was
-        # preceded/followed by a short control exchange (opcodes 0xf2/0xff/0xfe/
-        # 0x91/0x92 seen in cap1). Complete that ordering from a fresh capture.
-        self._send(proto.CH_LOGIN, proto.OP_LOGIN, payload)
+    def login(self, session: Session) -> bytes:
+        """Connect to the game service and perform the 1510 login handshake.
+
+        Sends the full captured login: the 0xF1 frame (channel 0x0101) whose
+        payload is the ``version + xuid + name + token`` prefix followed by
+        the eight-message bundle (0xFF/0x91/0x1C/0x61/0xBE/0x55/0xAD/0x57 with
+        counters 1..8, the last carrying the client settings XML).  The server
+        answers with an 0xF2 frame whose bundle includes the initial market
+        offer data (opcode 0x62, zlib ``<Empire><Offers>``); the bytes read
+        during the handshake are buffered internally so the first
+        :meth:`poll_once` can surface them, and are returned to the caller.
+        """
+        self.connect()
+        bundle = proto.build_login_bundle(session.xuid, session.username, session.token)
+        assert self._sock is not None
+        self._sock.sendall(bundle)
+        self._ctr = 9  # counters 1..8 were consumed by the login bundle
+
+        received = b""
+        deadline = time.monotonic() + self.connect_timeout
+        while time.monotonic() < deadline:
+            if b"\x00\x00\x00\xf2" in self._rx:
+                # The 0xF2 header arrived; keep draining for a short window so
+                # the rest of the reply bundle (the offers document) lands in
+                # the buffer for the first poll.
+                deadline = min(deadline, time.monotonic() + 3.0)
+            try:
+                chunk = self._recv_some()
+            except TimeoutError:
+                break
+            if not chunk:
+                break
+            self._rx += chunk
+            received += chunk
+        return received
 
     def ping(self) -> None:
-        self._send(proto.CH_GAME, proto.OP_PING, proto.build_ping_payload(self._next_seq()))
+        self._send(proto.CH_GAME, proto.OP_PING, proto.build_ping_payload())
 
     # -- market -----------------------------------------------------------
-    def request_market(self, selectors: list[int] | None = None) -> None:
-        """Send a market browse query. Default is a broad wildcard sweep."""
-        if selectors is None:
-            selectors = [proto.WILDCARD] * 6
-        body = proto.build_market_query_payload(self._next_seq(), selectors)
-        self._send(proto.CH_GAME, proto.OP_MARKET_QUERY, body)
+    def request_market(self, sweep: list[list[int]] | None = None) -> None:
+        """Send the market browse sweep.
+
+        By default the captured ten-query sweep
+        (:data:`aoeo_market.protocol.DEFAULT_MARKET_SWEEP`) is replayed.  An
+        all-wildcard query is *not* answered by the server — the queries must
+        keep the game's selector shapes.
+        """
+        if sweep is None:
+            sweep = [list(s) for s in proto.DEFAULT_MARKET_SWEEP]
+        for i, selectors in enumerate(sweep):
+            body = proto.build_market_query_payload(i, selectors)
+            self._send(proto.CH_GAME, proto.OP_MARKET_QUERY, body)
 
     def _drain_listings(self, budget: float) -> list:
-        """Read for up to *budget* seconds, decode frames, inflate zlib app
-        messages, and return all listings parsed from them."""
+        """Read for up to *budget* seconds, inflate zlib app messages straight
+        from the raw byte stream, and return all listings parsed from them.
+
+        Data messages carry their own ``[u32 inflated][u32 deflated][zlib]``
+        sizes and may span the declared frame lengths, so the frame layer is
+        bypassed here: the raw stream is scanned for complete zlib members,
+        exactly like :func:`aoeo_market.pcap_source.listings_from_pcap` does
+        offline.
+        """
         assert self._sock is not None
         deadline = time.monotonic() + budget
-        app = b""
         while time.monotonic() < deadline:
             try:
                 chunk = self._recv_some()
@@ -147,16 +188,13 @@ class MarketClient:
             if not chunk:
                 break
             self._rx += chunk
-            frames, self._rx = proto.decode_frames(self._rx)
-            for fr in frames:
-                app += fr.payload
-        merged = b"".join(out for _, out in proto.iter_zlib_members(app))
+        merged = b"".join(out for _, out in proto.iter_zlib_members(self._rx))
         return parse_listings(merged)
 
     # -- loop -------------------------------------------------------------
-    def poll_once(self, selectors: list[int] | None = None) -> list[Event]:
-        self.request_market(selectors)
-        listings = self._drain_listings(budget=min(self.poll_interval, 10.0))
+    def poll_once(self, sweep: list[list[int]] | None = None) -> list[Event]:
+        self.request_market(sweep)
+        listings = self._drain_listings(budget=min(self.poll_interval, 20.0))
         return self.observer.observe(listings)
 
     def run(self, on_event: Callable[[Event], None]) -> None:

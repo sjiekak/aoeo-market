@@ -24,6 +24,7 @@ package = false
 [tool.ruff]
 line-length = 159
 target-version = "py313"
+exclude = ["tmp"]  # scratch reverse-engineering scripts
 
 [tool.ruff.format]
 quote-style = "double"

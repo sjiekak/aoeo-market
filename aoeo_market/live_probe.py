@@ -30,16 +30,12 @@ from .constants import (
 )
 
 
-def resolve_credentials(
-    mail: str | None, password: str | None
-) -> tuple[str, str]:
+def resolve_credentials(mail: str | None, password: str | None) -> tuple[str, str]:
     """Return ``(email, password)`` from args, env, or a prompt."""
     if not mail:
         mail = os.environ.get("AOEO_EMAIL") or input("Email: ").strip()
     if not password:
-        password = os.environ.get("AOEO_PASSWORD") or getpass.getpass(
-            "Password: "
-        )
+        password = os.environ.get("AOEO_PASSWORD") or getpass.getpass("Password: ")
     return mail, password
 
 
@@ -83,34 +79,23 @@ def probe(
 
 
 def _probe_game(session: auth.GameSession, timeout: float) -> int:
-    """Best-effort 1510 login handshake; the full ordering is still partial."""
-    print(
-        "\nAttempting TCP 1510 login handshake (best-effort)...",
-        file=sys.stderr,
-    )
+    """Attempt the TCP 1510 login (full captured handshake) and read a reply."""
+    print("\nAttempting TCP 1510 login handshake ...", file=sys.stderr)
     mc = MarketClient(connect_timeout=timeout)
     try:
-        mc.connect()
-        mc.login(
+        reply = mc.login(
             Session(
                 xuid=session.xuid,
                 username=session.username,
                 token=session.token,
             )
         )
-        data = b""
-        try:
-            data = mc._recv_some()
-        except OSError as exc:  # no immediate reply is expected
-            print(f"  (no immediate reply: {exc!r})")
-        print("  sent OP_LOGIN 0xF1")
-        if data:
-            print(f"  server reply: {data.hex()}")
+        print("  sent 0xF1 login bundle (8 messages, counters 1..8)")
+        if reply:
+            f2_seen = b"\x00\x00\x00\xf2" in reply
+            print(f"  server reply: {len(reply)} bytes (0xF2 received: {f2_seen})")
         else:
-            print(
-                "  no immediate reply (login handshake is only partially "
-                "reversed; see client.login)"
-            )
+            print("  no immediate reply (server may be silent until polled)")
     finally:
         mc.close()
     return 0

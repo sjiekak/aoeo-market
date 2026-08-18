@@ -22,3 +22,8 @@ wheels/
 # Decompressed capture produced from the .gz at runtime
 *.pcapng
 *.pcapng.gz
+
+# Capture-dependent tests and their capture-derived reference data (local-only:
+# the captures they need are not in version control, and the auth ones embed
+# real account data)
+tests/capture/
