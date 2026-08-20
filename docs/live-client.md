@@ -22,11 +22,12 @@ second poll correctly reporting 0 changes.
 
 What the live run confirmed:
 
-- `MarketClient.acquire_session(mail, password, local_ip)` — the plaintext
-  TCP 4564 "Celeste Network" login works with the machine-specific constants
-  in `aoeo_market/auth.py` (`LOGIN_TAIL_OPAQUE` and `DEVICE_HASH`, captured
-  per install); the server re-issued the exact token seen in the 2026-08-13
-  capture.
+- `MarketClient.acquire_session(mail, password, local_ip, device_hash=...,
+  opaque=...)` — the plaintext TCP 4564 "Celeste Network" login works with the
+  machine-specific constants in `aoeo_market/auth.py` (`LOGIN_TAIL_OPAQUE` and
+  `DEVICE_HASH`, captured per install; the CLI passes them in, nothing is
+  inferred in the client); the server re-issued the exact token seen in the
+  2026-08-13 capture.
 - `MarketClient.login(session)` — the TCP 1510 login: 0xF1 frame + the
   eight-message bundle (counters 1..8), byte-identical to what the game
   sends; the server answered 0xF2 with the `02 01` status prefix and the
@@ -38,10 +39,36 @@ What the live run confirmed:
 Remaining caveats:
 
 - The 4564 tail/hash constants are **per install**. Running from another
-  machine requires re-capturing a login there and refreshing
-  `LOGIN_TAIL_OPAQUE` / `DEVICE_HASH`.
+  machine requires re-capturing a login there and passing the new values via
+  `--device-hash` / `--tail` (or refreshing `LOGIN_TAIL_OPAQUE` /
+  `DEVICE_HASH`, which the CLI defaults to).
 - The game re-logs in (4564 packet 7) shortly before the 1510 login; the
   client currently only does packets 1+2, which the server accepted fine.
+
+## CLI
+
+The live path is exposed as a command-line command:
+
+```
+$ uv run python -m aoeo_market.cli fetch --local-ip <your-ip>
+Logging in over Celeste Network 51.91.169.108:4564 ...
+657 active listings
+
+ITEM_ID                      TYPE      LVL CNT    PRICE EXPIRES(d)  SELLER
+...                          Trait      43   1    99000       30.0  4072340471133720139
+
+$ uv run python -m aoeo_market.cli fetch --local-ip <your-ip> --watch
+... same table, then ...
+[12:00:30] LISTED   tx=... ItemID @ 12345
+[12:01:00] REMOVED  tx=... ItemID -> EXPIRED   # vanished with <1 day left
+[12:02:00] REMOVED  tx=... ItemID -> REMOVED   # sold or withdrawn, indistinguishable
+```
+
+Credentials come from `--email`/`--password`, the `AOEO_EMAIL`/`AOEO_PASSWORD`
+environment variables, or an interactive prompt. `--device-hash` (64 hex chars)
+and `--tail` (4 hex bytes) default to the captured per-install values
+(`auth.DEVICE_HASH` / `auth.LOGIN_TAIL_OPAQUE`); pass them explicitly when
+running from a different machine.
 
 ## Operational note
 

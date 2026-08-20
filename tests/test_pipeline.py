@@ -74,20 +74,30 @@ def _mk(tx, expiry, price=100):
     )
 
 
-def test_listed_then_sold_vs_expired():
-    obs = MarketObserver(expiry_grace_seconds=60, clock=lambda: 0.0)
+def test_listed_then_removed_vs_expired():
+    obs = MarketObserver(clock=lambda: 0.0)
 
-    # t=0: two listings appear. A expires in 100s, B in 100000s.
+    # t=0: two listings appear. A expires in 100s, B in 100000s (~1.2 days).
     evs = obs.observe([_mk(1, 100), _mk(2, 100_000)], at=0.0)
     assert {e.kind for e in evs} == {"LISTED"}
     assert len(evs) == 2
 
-    # t=200: both gone. A vanished after its expiry -> EXPIRED.
-    #                    B vanished long before expiry -> SOLD_OR_CANCELLED.
+    # t=200: both gone. A vanished past its expiry -> EXPIRED.
+    #                    B vanished with >1 day remaining -> REMOVED (sold or
+    #                    withdrawn, indistinguishable).
     evs = obs.observe([], at=200.0)
     reasons = {e.listing.transaction_id: e.reason for e in evs}
     assert reasons[1] == RemovalReason.EXPIRED
-    assert reasons[2] == RemovalReason.SOLD_OR_CANCELLED
+    assert reasons[2] == RemovalReason.REMOVED
+
+
+def test_one_day_remaining_boundary():
+    obs = MarketObserver(clock=lambda: 0.0)
+    obs.observe([_mk(1, 86399), _mk(2, 86400)], at=0.0)
+    evs = obs.observe([], at=0.0)
+    reasons = {e.listing.transaction_id: e.reason for e in evs}
+    assert reasons[1] == RemovalReason.EXPIRED  # just under a day left
+    assert reasons[2] == RemovalReason.REMOVED  # exactly a day: not "less than"
 
 
 def test_stable_listing_emits_no_event():

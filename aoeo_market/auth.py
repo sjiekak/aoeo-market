@@ -72,12 +72,14 @@ LOGIN_TAIL_OPAQUE_ALT = bytes.fromhex("458e0d1e")  # machine A (2026-08-10)
 LOGIN_TAIL_SUFFIX = b"\x40\x00\x00\x00"  # constant across all captures
 
 
-def build_login_tail(ip: str, opaque: bytes = LOGIN_TAIL_OPAQUE) -> bytes:
+def build_login_tail(ip: str, opaque: bytes) -> bytes:
     """Build the 12-byte login tail for a given local IPv4 address.
 
     Layout: ``[4B opaque per-install][local IPv4 network order][0x40 00 00
-    00]``.  The opaque bytes are stable for a given install and are replayed
-    verbatim; only the address is computed.
+    00]``.  ``opaque`` is required: the 4 opaque bytes are stable for a given
+    install but differ between machines, so the caller must supply them
+    (:data:`LOGIN_TAIL_OPAQUE` / :data:`LOGIN_TAIL_OPAQUE_ALT`); only the
+    address is computed.
     """
     if len(opaque) != 4:
         raise ValueError("opaque must be exactly 4 bytes")
@@ -88,7 +90,8 @@ def build_login_tail(ip: str, opaque: bytes = LOGIN_TAIL_OPAQUE) -> bytes:
 # independent of the account: the 2026-08-13 and 2026-08-17 captures come from
 # the same machine but different accounts, and both send the value below; the
 # 2026-08-10 capture from another machine (same account as 2026-08-13) sends
-# the ALT value.
+# the ALT value.  Like the tail opaque bytes, this is never defaulted: callers
+# pass the value for their machine explicitly.
 DEVICE_HASH = "1257dc20e79151e29b7b2476a06de0df3e3952d240f94af2a235e468d971eb49"
 DEVICE_HASH_ALT = "01b41e3557182b068efd169eb446b3eef517b209aad51b378ad88d2258035a18"
 
@@ -127,10 +130,15 @@ def build_login_request(
     mail: str,
     password: str,
     local_ip: str,
-    device_hash: str = DEVICE_HASH,
-    opaque: bytes = LOGIN_TAIL_OPAQUE,
+    device_hash: str,
+    opaque: bytes,
 ) -> bytes:
-    """Build the packet-1 login request body + header for the 4564 service."""
+    """Build the packet-1 login request body + header for the 4564 service.
+
+    ``device_hash`` and ``opaque`` are the per-install constants
+    (:data:`DEVICE_HASH` / :data:`LOGIN_TAIL_OPAQUE`) and are required: the
+    caller chooses which machine's values to replay.
+    """
     if len(device_hash) != 64:
         raise ValueError("device_hash must be 64 hexadecimal characters")
     body = _login_body(mail, password, local_ip, device_hash, opaque)
@@ -149,8 +157,8 @@ def build_relogin_request(
     local_ip: str,
     xuid: int,
     token: str,
-    device_hash: str = DEVICE_HASH,
-    opaque: bytes = LOGIN_TAIL_OPAQUE,
+    device_hash: str,
+    opaque: bytes,
 ) -> bytes:
     """Build the packet-7 re-login body + header for the 4564 service.
 
@@ -160,6 +168,9 @@ def build_relogin_request(
     packet 1 (``0x01``, version 2018, lengths, tail, device hash).  The
     server answers with a packet-7 response identical in layout to the
     packet-1 response (with the 8 leading zero bytes replaced by the xuid).
+
+    ``device_hash`` and ``opaque`` are the per-install constants and are
+    required, exactly as in :func:`build_login_request`.
     """
     if len(device_hash) != 64:
         raise ValueError("device_hash must be 64 hexadecimal characters")
@@ -272,9 +283,14 @@ class CelesteNetworkClient:
         mail: str,
         password: str,
         local_ip: str,
-        device_hash: str = DEVICE_HASH,
+        device_hash: str,
+        opaque: bytes,
     ) -> GameSession:
         """Authenticate with email + password and return the game session.
+
+        ``device_hash`` and ``opaque`` are the per-install constants
+        (:data:`DEVICE_HASH` / :data:`LOGIN_TAIL_OPAQUE`) and must be supplied
+        by the caller — no captured defaults are inferred.
 
         Performs the 4564 exchange: login request, login response, session
         register, then drains the (large) manifest reply. The manifest is not
@@ -286,7 +302,7 @@ class CelesteNetworkClient:
         """
         self.connect()
         try:
-            self._sock.sendall(build_login_request(mail, password, local_ip, device_hash))
+            self._sock.sendall(build_login_request(mail, password, local_ip, device_hash, opaque))
             pid, body = self._recv_packet()
             if pid != 1:
                 raise RuntimeError(f"unexpected login response packet id {pid}")

@@ -8,6 +8,7 @@ from aoeo_market.auth import (
     LOGIN_TAIL_OPAQUE,
     LOGIN_TAIL_OPAQUE_ALT,
     PROTOCOL_VERSION,
+    CelesteNetworkClient,
     build_login_request,
     build_login_tail,
     build_relogin_request,
@@ -21,6 +22,7 @@ def test_build_login_request_rejects_bad_device_hash():
             "dummy-password",
             "127.0.0.1",
             device_hash="tooshort",
+            opaque=LOGIN_TAIL_OPAQUE,
         )
 
 
@@ -48,7 +50,7 @@ def test_build_login_tail_rejects_bad_opaque():
 
 
 def test_login_request_layout_constants():
-    pkt = build_login_request("a@b.co", "pw", "192.168.0.17")
+    pkt = build_login_request("a@b.co", "pw", "192.168.0.17", device_hash=DEVICE_HASH, opaque=LOGIN_TAIL_OPAQUE)
     # 40 zero bytes, 0x01, version 2018 LE
     assert pkt[8:48] == b"\x00" * 40
     assert pkt[48] == 0x01
@@ -69,7 +71,7 @@ def test_login_request_layout_constants():
 def test_relogin_request_layout():
     xuid = 0x0123456789ABCDEF
     token = "T" * 32
-    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token)
+    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token, device_hash=DEVICE_HASH, opaque=LOGIN_TAIL_OPAQUE)
     assert pkt[0:8] == (7).to_bytes(4, "little") + (8 + 137).to_bytes(4, "little")
     body = pkt[8:]
     # xuid + token + 0x01 + version + email + password + tail + hash
@@ -84,6 +86,20 @@ def test_relogin_request_layout():
     assert body[61:73] == LOGIN_TAIL_OPAQUE + bytes([192, 168, 0, 17]) + b"\x40\x00\x00\x00"
     assert body[73:137] == DEVICE_HASH.encode("ascii")
     assert len(body) == 137
+
+
+def test_login_builders_require_identity_values():
+    """The per-install tail/hash values are never defaulted — callers must
+    pass them explicitly."""
+    with pytest.raises(TypeError):
+        build_login_request("a@b.co", "pw", "192.168.0.17")
+    with pytest.raises(TypeError):
+        build_relogin_request("a@b.co", "pw", "192.168.0.17", 1, "T" * 32)
+    with pytest.raises(TypeError):
+        build_login_tail("192.168.0.17")
+    cn = CelesteNetworkClient()
+    with pytest.raises(TypeError):
+        cn.login("a@b.co", "pw", "192.168.0.17")
 
 
 def test_device_hash_constants():

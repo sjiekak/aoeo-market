@@ -22,6 +22,7 @@ import os
 import sys
 
 from . import auth
+from .cli_args import add_login_args, parse_device_hash, parse_tail
 from .client import MarketClient, Session
 from .constants import (
     CELESTE_NETWORK_HOST,
@@ -47,8 +48,17 @@ def probe(
     port: int | None = None,
     timeout: float = DEFAULT_CONNECT_TIMEOUT,
     try_game: bool = False,
+    *,
+    device_hash: str,
+    opaque: bytes,
 ) -> int:
-    """Attempt a live login and return a process exit code (0 on success)."""
+    """Attempt a live login and return a process exit code (0 on success).
+
+    ``device_hash`` and ``opaque`` are the per-install login constants and are
+    required: this function does not infer them.  The CLI entry points
+    (:mod:`aoeo_market.cli` and :func:`main`) default them to the captured
+    values via :func:`aoeo_market.cli_args.add_login_args`.
+    """
     host = host or CELESTE_NETWORK_HOST
     port = port or CELESTE_NETWORK_PORT
     mail, password = resolve_credentials(mail, password)
@@ -56,7 +66,13 @@ def probe(
     print(f"Connecting to Celeste Network {host}:{port} ...", file=sys.stderr)
     cn = auth.CelesteNetworkClient(host=host, port=port, timeout=timeout)
     try:
-        session = cn.login(mail, password, local_ip)
+        session = cn.login(
+            mail,
+            password,
+            local_ip,
+            device_hash=device_hash,
+            opaque=opaque,
+        )
         manifest_received = cn.manifest_received
     finally:
         cn.close()
@@ -106,18 +122,18 @@ def main(argv: list[str] | None = None) -> int:
         prog="aoeo_market.live_probe",
         description="Attempt a real connection to the Celeste game backend.",
     )
-    p.add_argument("--local-ip", required=True, help="your local IPv4 address")
-    p.add_argument("--email", help="account email (or $AOEO_EMAIL)")
-    p.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
-    p.add_argument("--host", default=CELESTE_NETWORK_HOST)
-    p.add_argument("--port", type=int, default=CELESTE_NETWORK_PORT)
-    p.add_argument("--timeout", type=float, default=DEFAULT_CONNECT_TIMEOUT)
+    add_login_args(p)
     p.add_argument(
         "--game",
         action="store_true",
         help="also attempt the TCP 1510 login handshake (best-effort)",
     )
     args = p.parse_args(argv)
+    try:
+        device_hash = parse_device_hash(args.device_hash)
+        opaque = parse_tail(args.tail)
+    except ValueError as exc:
+        p.error(str(exc))
     return probe(
         local_ip=args.local_ip,
         mail=args.email,
@@ -126,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         timeout=args.timeout,
         try_game=args.game,
+        device_hash=device_hash,
+        opaque=opaque,
     )
 
 

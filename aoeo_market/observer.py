@@ -5,19 +5,24 @@ is whatever the browse returned, plus the wall-clock time it was taken). It emit
 events describing what changed:
 
 * ``LISTED``  - a transaction id not seen before.
-* ``REMOVED`` - a transaction id that was present and is now gone. Removals are
-  classified using each listing's expiry countdown:
+* ``REMOVED`` - a transaction id that was present and is now gone. The server
+  never sends a removal notice: at any given time you only have the list of
+  active items, and users can withdraw their sales at any moment, so a sold,
+  withdrawn, or expired listing all look the same — the listing simply stops
+  appearing. The expiry countdown is the one signal we have, so removals are
+  classified like this:
 
-    - ``EXPIRED``            - it vanished at (or after) its known expiry time.
-    - ``SOLD_OR_CANCELLED``  - it vanished well before expiry. On a fixed-price
-      market this is overwhelmingly a sale, but a seller cancelling a listing is
-      indistinguishable from the outside, so we do not claim more than we can
-      prove.
+    - ``EXPIRED`` - it vanished with **less than a day remaining** on its
+      countdown (i.e. within ``expiry_window_seconds`` of its expected expiry).
+      With so little time left, timing out unsold is the overwhelmingly likely
+      cause.
+    - ``REMOVED`` - it vanished with at least a day to spare. That is a sale or
+      a withdrawal — indistinguishable from the outside, so no stronger claim
+      is made.
 
 Why this is the best an external observer can do: the server only ever transmits
 active listings (``BuyerCharacterId == -1``); it never broadcasts a sale or who
-bought. The expiry countdown is the one signal that lets us separate "left early"
-from "timed out". See the project README.
+bought. See the project README.
 """
 
 from __future__ import annotations
@@ -31,8 +36,8 @@ from .market import Listing
 
 
 class RemovalReason(str, Enum):
-    EXPIRED = "EXPIRED"
-    SOLD_OR_CANCELLED = "SOLD_OR_CANCELLED"
+    EXPIRED = "EXPIRED"  # vanished with < 1 day left -> timed out unsold
+    REMOVED = "REMOVED"  # vanished with time to spare -> sold or withdrawn
 
 
 @dataclass(frozen=True)
@@ -67,10 +72,12 @@ class _Tracked:
 class MarketObserver:
     """Stateful diff engine. Not thread-safe; drive it from one loop."""
 
-    # A removal seen at or after (expected_expiry_at - grace) counts as EXPIRED.
-    # Set at least as large as your poll interval so a listing that expires
-    # between polls is not misread as a sale.
-    expiry_grace_seconds: float = 120.0
+    # A removal whose expected expiry is within this window counts as EXPIRED;
+    # anything earlier is REMOVED with no cause claimed (sold vs. withdrawn is
+    # indistinguishable). One day by default. Set it at least as large as your
+    # poll interval so a listing that times out between polls is still read as
+    # expired.
+    expiry_window_seconds: float = 86400.0
     clock: Callable[[], float] = time.time
 
     _tracked: dict[int, _Tracked] = field(default_factory=dict)
@@ -97,10 +104,10 @@ class MarketObserver:
             if tx in seen:
                 continue
             t = self._tracked.pop(tx)
-            if now >= t.expected_expiry_at - self.expiry_grace_seconds:
+            if t.expected_expiry_at - now < self.expiry_window_seconds:
                 reason = RemovalReason.EXPIRED
             else:
-                reason = RemovalReason.SOLD_OR_CANCELLED
+                reason = RemovalReason.REMOVED
             events.append(
                 RemovedEvent(
                     at=now,
