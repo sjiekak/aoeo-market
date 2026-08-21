@@ -1,6 +1,7 @@
-"""Unit tests for the CLI printers — no network or captures required."""
+"""Unit tests for the CLI printers and commands — no network or captures required."""
 
-from aoeo_market.cli import _print_event, _print_listings
+from aoeo_market import store
+from aoeo_market.cli import _print_event, _print_listings, main
 from aoeo_market.market import Listing
 from aoeo_market.observer import ListedEvent, RemovalReason, RemovedEvent
 
@@ -53,3 +54,15 @@ def test_print_removed_event_expired(capsys):
     out = capsys.readouterr().out
     assert "REMOVED" in out
     assert "-> EXPIRED" in out
+
+
+def test_init_db_command_creates_and_is_idempotent(tmp_path, capsys):
+    db = tmp_path / "market.db"
+    assert main(["init-db", "--db", str(db)]) == 0
+    assert db.exists()
+    conn = store.open_store(db, read_only=False)
+    assert store.snapshot_count(conn) == 0
+    conn.close()
+    # re-running is safe and reports the existing (empty) state
+    assert main(["init-db", "--db", str(db)]) == 0
+    assert "0 snapshots present" in capsys.readouterr().out

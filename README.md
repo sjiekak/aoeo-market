@@ -63,7 +63,7 @@ aoeo_market/
   pcap_source.py  read listings from a .pcapng (offline data source)
   auth.py         TCP 4564 "Celeste Network" login (email+password -> session)
   client.py       live TCP 1510 client
-  cli.py          `dump`, `replay`, `probe`, and `fetch` commands
+  cli.py          `dump`, `replay`, `probe`, `fetch`, and `init-db` commands
   live_probe.py   live connection probe
   store.py        DuckDB snapshot store + analytics queries
   web.py          market website (stdlib HTTP server + JSON API)

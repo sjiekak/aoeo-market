@@ -264,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if not Path(args.db).exists():
-        print(f"warning: {args.db} does not exist yet; POST a snapshot to /api/snapshot or run `fetch --store` to create it", file=sys.stderr)
+        print(f"warning: {args.db} does not exist yet; run `aoeo_market.cli init-db --db {args.db}` (or POST a snapshot) to create it", file=sys.stderr)
 
     _Handler.app = WebApp(args.db)
     server = ThreadingHTTPServer((args.host, args.port), _Handler)

@@ -80,7 +80,10 @@ The intended deployment puts both components in one namespace:
 - **Web app** — a StatefulSet with **exactly one replica** (DuckDB allows one
   writer per file), `--host 0.0.0.0`, the `market.db` file on a PersistentVolume,
   and `GET /healthz` as the liveness/readiness probe (it does not touch the
-  database).
+  database).  An **init container** runs
+  `python -m aoeo_market.cli init-db --db /data/market.db` first, so the pod
+  always starts with a ready, schema-complete database on the volume
+  (idempotent — safe on every restart).
 - **Fetcher** — a CronJob (`schedule: "0 * * * *"`) running
   `python -m aoeo_market.cli fetch --store http://<service>:8000 --quiet`
   with the credentials in a Secret (`AOEO_EMAIL` / `AOEO_PASSWORD`).  Same
