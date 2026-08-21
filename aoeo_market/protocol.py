@@ -16,7 +16,8 @@ Notes
 * ``channel`` 0x0032 (50) is the main game service; 0x0101 (257) carries the
   login frame; the lobby/realm service on TCP 1500 uses 0x0028 (40).
 * The 1-byte **counter** is a per-connection correlation id: it starts at 1 in
-  the login bundle, increments on every client message, and is echoed by the
+  the login bundle, increments on every client message (wrapping within the
+  byte after 255), and is echoed by the
   server's reply (login reply opcodes 0xFE/0x92/0x1D/0x62 mirror the request
   counters 1..4; ping 0x7E counter N is answered by 0x7F counter N).
 * The opcode field is ``[1B flags][3B opcode]``.  Flags 0 = plain, and
