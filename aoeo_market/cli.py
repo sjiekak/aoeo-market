@@ -4,6 +4,11 @@ uv run python -m aoeo_market.cli dump   <capture>   # list all listings
 uv run python -m aoeo_market.cli replay <capA> <capB># diff two snapshots -> events
 uv run python -m aoeo_market.cli fetch  --local-ip <ip>  # read the live market
 uv run python -m aoeo_market.cli fetch  --local-ip <ip> --watch  # stream events
+uv run python -m aoeo_market.cli fetch  --local-ip <ip> --store --quiet  # snapshot -> market.db
+
+``fetch --store`` persists every fetched snapshot into the SQLite database
+that powers the market website (:mod:`aoeo_market.web`); run it from cron
+every hour to build the history.
 """
 
 from __future__ import annotations
@@ -102,15 +107,28 @@ def _probe(args: argparse.Namespace) -> int:
     )
 
 
-def _watch(mc: MarketClient, interval: float) -> int:
+def _record_snapshot(conn, listings: list[Listing], label: str) -> None:
+    from . import store
+
+    store.record_snapshot(conn, listings)
+    print(f"stored {len(listings)} listings -> {label}", file=sys.stderr)
+
+
+def _watch(mc: MarketClient, interval: float, store_conn=None, quiet: bool = False) -> int:
     """Prime the observer with the current snapshot, then stream events."""
     listings = mc.fetch_listings()
-    _print_listings(listings)
+    if store_conn is not None:
+        _record_snapshot(store_conn, listings, "watch")
+    if not quiet:
+        _print_listings(listings)
     mc.observer.observe(listings)  # first snapshot: suppress the LISTED flood
     while True:
         mc.ping()
         time.sleep(interval)
-        for ev in mc.poll_once():
+        listings = mc.fetch_listings()
+        if store_conn is not None:
+            _record_snapshot(store_conn, listings, "watch")
+        for ev in mc.observer.observe(listings):
             _print_event(ev)
 
 
@@ -129,6 +147,11 @@ def _fetch(args: argparse.Namespace) -> int:
         connect_timeout=args.timeout,
         poll_interval=args.interval,
     )
+    store_conn = None
+    if args.store:
+        from . import store
+
+        store_conn = store.open_store(args.store)
     try:
         print(f"Logging in over Celeste Network {args.host}:{args.port} ...", file=sys.stderr)
         session = mc.acquire_session(
@@ -146,13 +169,19 @@ def _fetch(args: argparse.Namespace) -> int:
         )
         mc.login(session)
         if args.watch:
-            return _watch(mc, args.interval)
-        _print_listings(mc.fetch_listings())
+            return _watch(mc, args.interval, store_conn, args.quiet)
+        listings = mc.fetch_listings()
+        if store_conn is not None:
+            _record_snapshot(store_conn, listings, args.store)
+        if not args.quiet:
+            _print_listings(listings)
         return 0
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 0
     finally:
+        if store_conn is not None:
+            store_conn.close()
         mc.close()
 
 
@@ -202,6 +231,18 @@ def main(argv: list[str] | None = None) -> int:
         "--watch",
         action="store_true",
         help="keep polling and stream LISTED/REMOVED events instead of exiting",
+    )
+    f.add_argument(
+        "--store",
+        nargs="?",
+        const="market.db",
+        metavar="PATH",
+        help="persist every fetched snapshot into SQLite PATH (default market.db)",
+    )
+    f.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the listings table (useful for cron runs)",
     )
     f.set_defaults(func=_fetch)
 
