@@ -16,13 +16,16 @@ intelligence.
 uv run pytest                                              # offline test suite
 uv run python -m aoeo_market.cli dump   capture_*.pcapng.gz   # list active listings
 uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapshots -> events
-uv run python -m aoeo_market.cli probe   --local-ip <your-ip> --game   # live login probe
-uv run python -m aoeo_market.cli fetch  --local-ip <your-ip>              # read the live market
-uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --watch      # stream LISTED/REMOVED events
-uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --store      # snapshot the market into market.db
-uv run python -m aoeo_market.web --db market.db                           # serve the dashboard
+uv run python -m aoeo_market.cli probe   --game                    # live login probe
+uv run python -m aoeo_market.cli fetch                             # read the live market
+uv run python -m aoeo_market.cli fetch  --watch                    # stream LISTED/REMOVED events
+uv run python -m aoeo_market.cli fetch  --store --quiet            # snapshot the market into market.db
+uv run python -m aoeo_market.web --db market.db                    # serve the dashboard
 ```
 
+> The live commands detect your local IPv4 address and use it as the default;
+> pass `--local-ip <your-ip>` to override it.
+>
 > All Python in this project runs through `uv` and the project-local `.venv`.
 
 ## Documentation

@@ -6,7 +6,7 @@ two independent captures (2026-08-10 and 2026-08-17) and **validated live**
 from the capture machine (2026-08-17):
 
 ```
-$ uv run python -m aoeo_market.live_probe --local-ip <your-ip> --game
+$ uv run python -m aoeo_market.live_probe --game
 OK - 4564 login accepted
   xuid        = <64-bit account id>
   username    = <profile name>
@@ -50,14 +50,14 @@ Remaining caveats:
 The live path is exposed as a command-line command:
 
 ```
-$ uv run python -m aoeo_market.cli fetch --local-ip <your-ip>
+$ uv run python -m aoeo_market.cli fetch
 Logging in over Celeste Network 51.91.169.108:4564 ...
 657 active listings
 
 ITEM_ID                      TYPE      LVL CNT    PRICE EXPIRES(d)  SELLER
 ...                          Trait      43   1    99000       30.0  4072340471133720139
 
-$ uv run python -m aoeo_market.cli fetch --local-ip <your-ip> --watch
+$ uv run python -m aoeo_market.cli fetch --watch
 ... same table, then ...
 [12:00:30] LISTED   tx=... ItemID @ 12345
 [12:01:00] REMOVED  tx=... ItemID -> EXPIRED   # vanished with <1 day left
@@ -65,7 +65,9 @@ $ uv run python -m aoeo_market.cli fetch --local-ip <your-ip> --watch
 ```
 
 Credentials come from `--email`/`--password`, the `AOEO_EMAIL`/`AOEO_PASSWORD`
-environment variables, or an interactive prompt. `--device-hash` (64 hex chars)
+environment variables, or an interactive prompt. The local IPv4 address is
+auto-detected from the kernel route and used as the default; pass
+`--local-ip <ip>` to override it. `--device-hash` (64 hex chars)
 and `--tail` (4 hex bytes) default to the captured per-install values
 (`auth.DEVICE_HASH` / `auth.LOGIN_TAIL_OPAQUE`); pass them explicitly when
 running from a different machine.
