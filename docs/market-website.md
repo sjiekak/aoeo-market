@@ -112,6 +112,11 @@ The API is the stable surface of the website; the frontend is a consumer of it.
   "cheaper than" column is the item's price percentile within its tier.
   Untagged items (materials and most consumables) are excluded by default —
   the `include_unrated` API flag adds them as their own tier.
+- **Price per unit**: the listing's `ItemPrice` is the *total for the whole
+  stack* (`ItemCount`), and bulk discounts exist, so every analytics view
+  (price distributions, item history, best value, not-on-sale stats, movers)
+  normalizes to `ItemPrice / ItemCount`. The listings and item tables show
+  both the unit price and, where relevant, the stack total.
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job, move `market.db` (and `-wal`/`-shm` sidecars) aside, and
   run `fetch --store` again.

@@ -162,6 +162,7 @@ function renderListings() {
     .sort((a, b) => {
       let r = 0;
       if (sort === "item" || sort === "type" || sort === "seller") r = String(a[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]).localeCompare(String(b[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]));
+      else if (sort === "price") r = a.unit_price - b.unit_price;
       else r = a[sort === "expiry" ? "seconds_till_expiry" : "item_" + sort] - b[sort === "expiry" ? "seconds_till_expiry" : "item_" + sort];
       return r * lsDir;
     });
@@ -173,7 +174,7 @@ function renderListings() {
         <td>${esc(l.item_type)}</td>
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
-        <td class="num">${fmtPrice(l.item_price)}</td>
+        <td class="num">${fmtPrice(l.unit_price)}${l.item_count > 1 ? ` <span class="muted">(×${l.item_count})</span>` : ""}</td>
         <td class="num">${fmtDays(l.seconds_till_expiry)}</td>
         <td>${esc(String(l.seller_empire_id))}</td>
       </tr>`
@@ -224,7 +225,7 @@ async function loadBestSellers() {
         <td class="num">${fmtInt(r.timed_sales)}</td>
         <td class="num">${fmtInt(r.expired)}</td>
         <td class="num">${fmtInt(r.active_count)}</td>
-        <td class="num">${fmtPrice(r.current_median_price)}</td>
+        <td class="num">${fmtPrice(r.current_median_unit_price)}</td>
       </tr>`
     )
     .join("") || '<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as hourly snapshots accumulate</td></tr>';
@@ -272,9 +273,9 @@ async function loadBestValue() {
         <td class="num">${r.item_level}</td>
         <td>${rarityBadge(r.rarity)}</td>
         <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
-        <td class="num">${fmtPrice(r.median_price)}</td>
-        <td class="num">${fmtPrice(r.current_median_price)}</td>
-        <td class="num">${fmtPrice(r.current_min_price)}</td>
+        <td class="num">${fmtPrice(r.median_unit_price)}</td>
+        <td class="num">${fmtPrice(r.current_median_unit_price)}</td>
+        <td class="num">${fmtPrice(r.current_min_unit_price)}</td>
         <td class="num">${r.cheaper_than_pct}%</td>
         <td class="num">${fmtInt(r.active_count)}</td>
       </tr>`
@@ -292,7 +293,7 @@ document.querySelectorAll("#tab-best-value th a").forEach((a) =>
 
 /* --- not on sale --------------------------------------------------------- */
 
-let nosOrder = "median_price";
+let nosOrder = "median_unit_price";
 let nosDir = "desc";
 
 async function loadNotOnSale() {
@@ -305,9 +306,9 @@ async function loadNotOnSale() {
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
-        <td class="num">${fmtPrice(r.median_price)}</td>
-        <td class="num">${fmtPrice(r.min_price)}</td>
-        <td class="num">${fmtPrice(r.max_price)}</td>
+        <td class="num">${fmtPrice(r.median_unit_price)}</td>
+        <td class="num">${fmtPrice(r.min_unit_price)}</td>
+        <td class="num">${fmtPrice(r.max_unit_price)}</td>
         <td class="num">${fmtInt(r.times_listed)}</td>
         <td class="num">${fmtTime(r.last_seen)}</td>
       </tr>`
@@ -355,7 +356,7 @@ async function loadItem(itemId) {
   $("#item-meta").innerHTML = `${esc(it.item_type)} · level ${it.item_level} · ${rarityBadge(it.rarity) || "rarity unknown"}`;
   const cur = it.current;
   $("#item-count").textContent = fmtInt(cur.length);
-  const prices = cur.map((c) => c.item_price).sort((a, b) => a - b);
+  const prices = cur.map((c) => c.unit_price).sort((a, b) => a - b);
   const med = prices.length ? prices[Math.floor(prices.length / 2)] : null;
   $("#item-min").textContent = fmtPrice(prices[0]);
   $("#item-med").textContent = fmtPrice(med);
@@ -413,13 +414,14 @@ async function loadItem(itemId) {
   $("#item-current").innerHTML = cur
     .map(
       (c) => `<tr>
+        <td class="num">${fmtPrice(c.unit_price)}</td>
         <td class="num">${fmtPrice(c.item_price)}</td>
         <td class="num">${c.item_count}</td>
         <td class="num">${fmtDays(c.seconds_till_expiry)}</td>
         <td>${esc(String(c.seller_empire_id))}</td>
       </tr>`
     )
-    .join("") || '<tr><td colspan="4" class="muted">not currently listed</td></tr>';
+    .join("") || '<tr><td colspan="5" class="muted">not currently listed</td></tr>';
 }
 
 $("#item-back").addEventListener("click", () => {

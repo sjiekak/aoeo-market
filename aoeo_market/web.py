@@ -82,7 +82,7 @@ class WebApp:
                 return self._json(
                     store.items_not_on_sale(
                         self._conn(),
-                        order=query.get("order", ["median_price"])[0],
+                        order=query.get("order", ["median_unit_price"])[0],
                         direction=query.get("dir", ["desc"])[0],
                     )
                 )

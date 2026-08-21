@@ -40,7 +40,7 @@
       </div>
       <div class="grid-2">
         <div class="card chart-card"><h2>Market supply over time</h2><canvas id="chart-supply"></canvas></div>
-        <div class="card chart-card"><h2>Price distribution (current)</h2><canvas id="chart-prices"></canvas></div>
+        <div class="card chart-card"><h2>Price distribution (current, per unit)</h2><canvas id="chart-prices"></canvas></div>
         <div class="card chart-card"><h2>Listings by type</h2><canvas id="chart-types"></canvas></div>
         <div class="card chart-card"><h2>Listings by rarity</h2><canvas id="chart-rarity"></canvas></div>
       </div>
@@ -72,7 +72,7 @@
       </div>
       <div class="card">
         <table>
-          <thead><tr><th>Item</th><th>Type</th><th class="num">Lvl</th><th class="num">Cnt</th><th class="num">Price</th><th class="num">Expires</th><th>Seller</th></tr></thead>
+          <thead><tr><th>Item</th><th>Type</th><th class="num">Lvl</th><th class="num">Cnt</th><th class="num">Price/unit</th><th class="num">Expires</th><th>Seller</th></tr></thead>
           <tbody id="listings-body"></tbody>
         </table>
       </div>
@@ -102,7 +102,7 @@
                 <th class="num"><a data-order="sales">Sales</a></th>
                 <th class="num"><a data-order="expired">Expired</a></th>
                 <th class="num"><a data-order="active_count">On sale now</a></th>
-                <th class="num"><a data-order="current_median_price">Current median</a></th>
+                <th class="num"><a data-order="current_median_unit_price">Current median/unit</a></th>
               </tr>
             </thead>
             <tbody id="best-body"></tbody>
@@ -130,9 +130,9 @@
                 <th class="num"><a data-order="level">Lvl</a></th>
                 <th><a data-order="rarity">Rarity</a></th>
                 <th class="num"><a data-order="value_ratio">Value ratio</a></th>
-                <th class="num"><a data-order="median_price">Typical (hist.)</a></th>
-                <th class="num"><a data-order="current_median_price">Now (median)</a></th>
-                <th class="num"><a data-order="current_min_price">Now (min)</a></th>
+                <th class="num"><a data-order="median_unit_price">Typical/unit (hist.)</a></th>
+                <th class="num"><a data-order="current_median_unit_price">Now/unit (median)</a></th>
+                <th class="num"><a data-order="current_min_unit_price">Now/unit (min)</a></th>
                 <th class="num"><a data-order="cheaper_than_pct">Cheaper than</a></th>
                 <th class="num"><a data-order="active_count">On sale</a></th>
               </tr>
@@ -154,9 +154,9 @@
               <th><a data-order="type">Type</a></th>
               <th class="num"><a data-order="level">Lvl</a></th>
               <th><a data-order="rarity">Rarity</a></th>
-              <th class="num"><a data-order="median_price">Median price</a></th>
-              <th class="num"><a data-order="min_price">Min</a></th>
-              <th class="num"><a data-order="max_price">Max</a></th>
+              <th class="num"><a data-order="median_unit_price">Median price/unit</a></th>
+              <th class="num"><a data-order="min_unit_price">Min/unit</a></th>
+              <th class="num"><a data-order="max_unit_price">Max/unit</a></th>
               <th class="num"><a data-order="times_listed">Times listed</a></th>
               <th class="num"><a data-order="last_seen">Last seen</a></th>
             </tr>
@@ -192,13 +192,13 @@
         <div class="card kpi"><div class="kpi-value" id="item-max">–</div><div class="kpi-label">current max</div></div>
       </div>
       <div class="grid-2">
-        <div class="card chart-card wide"><h2>Price history <span class="muted">(line = median per snapshot, dots = individual listings)</span></h2><canvas id="chart-item-history"></canvas></div>
-        <div class="card chart-card"><h2>Historical price distribution</h2><canvas id="chart-item-histogram"></canvas></div>
+        <div class="card chart-card wide"><h2>Price history <span class="muted">(per unit — line = median per snapshot, dots = individual listings)</span></h2><canvas id="chart-item-history"></canvas></div>
+        <div class="card chart-card"><h2>Historical price distribution <span class="muted">(per unit)</span></h2><canvas id="chart-item-histogram"></canvas></div>
       </div>
       <div class="card">
         <h2>Current listings</h2>
         <table>
-          <thead><tr><th class="num">Price</th><th class="num">Count</th><th class="num">Expires</th><th>Seller</th></tr></thead>
+          <thead><tr><th class="num">Price/unit</th><th class="num">Total</th><th class="num">Count</th><th class="num">Expires</th><th>Seller</th></tr></thead>
           <tbody id="item-current"></tbody>
         </table>
       </div>

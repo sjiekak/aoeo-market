@@ -131,6 +131,9 @@ def _listing_dict(row: sqlite3.Row) -> dict:
     rar = rarity_of(d["item_id"])
     d["rarity"] = rar[1] if rar else None
     d["rarity_rank"] = rar[0] if rar else 0
+    # ItemPrice is the total for the whole stack; the price per unit is what
+    # makes listings of different stack sizes comparable.
+    d["unit_price"] = round(d["item_price"] / max(d["item_count"], 1), 2)
     return d
 
 
@@ -220,7 +223,7 @@ def market_overview(conn: sqlite3.Connection, top_movers: int = 15) -> dict:
         "SELECT item_type AS name, COUNT(*) AS count FROM listings WHERE snapshot_id = ? GROUP BY item_type ORDER BY count DESC",
         (sid,),
     ).fetchall()
-    prices = [r["item_price"] for r in conn.execute("SELECT item_price FROM listings WHERE snapshot_id = ?", (sid,))]
+    prices = [r["item_price"] / max(r["item_count"], 1) for r in conn.execute("SELECT item_price, item_count FROM listings WHERE snapshot_id = ?", (sid,))]
     supply = conn.execute(
         """
         SELECT s.captured_at AS t, COUNT(l.transaction_id) AS count
@@ -290,12 +293,12 @@ def _price_movers(conn: sqlite3.Connection, sid: int, prev_sid: int | None, top:
 
 def _median_prices_by_item(conn: sqlite3.Connection, snapshot_id: int) -> dict[str, float]:
     rows = conn.execute(
-        "SELECT item_id, item_price FROM listings WHERE snapshot_id = ? ORDER BY item_id, item_price",
+        "SELECT item_id, item_price, item_count FROM listings WHERE snapshot_id = ? ORDER BY item_id, item_price",
         (snapshot_id,),
     )
     out: dict[str, list[int]] = {}
     for r in rows:
-        out.setdefault(r["item_id"], []).append(r["item_price"])
+        out.setdefault(r["item_id"], []).append(r["item_price"] / max(r["item_count"], 1))
     return {k: median(v) for k, v in out.items()}
 
 
@@ -305,12 +308,14 @@ def _median_prices_by_item(conn: sqlite3.Connection, snapshot_id: int) -> dict[s
 def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000) -> dict | None:
     """Current listings plus the price series of one item across all snapshots.
 
-    Returns ``None`` when the item was never observed.  The raw scatter points
-    are downsampled evenly to *max_points* so long histories stay chartable.
+    Prices are per unit (item_price / item_count) so listings of different
+    stack sizes stay comparable.  Returns ``None`` when the item was never
+    observed.  The raw scatter points are downsampled evenly to *max_points*
+    so long histories stay chartable.
     """
     rows = conn.execute(
         """
-        SELECT s.id AS sid, s.captured_at AS t, l.item_price AS price,
+        SELECT s.id AS sid, s.captured_at AS t, l.item_price AS price, l.item_count AS count,
                l.item_type AS item_type, l.item_level AS item_level
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
         WHERE l.item_id = ?
@@ -326,13 +331,14 @@ def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000
     points: list[dict] = []
     for r in rows:
         sid = r["sid"]
+        unit = r["price"] / max(r["count"], 1)
         series.setdefault(
             sid,
             {"t": r["t"], "prices": [], "count": 0, "item_type": r["item_type"], "item_level": r["item_level"]},
         )
-        series[sid]["prices"].append(r["price"])
+        series[sid]["prices"].append(unit)
         series[sid]["count"] += 1
-        points.append({"t": r["t"], "price": r["price"]})
+        points.append({"t": r["t"], "price": round(unit, 2)})
 
     def summarize(s: dict) -> dict:
         p = s["prices"]
@@ -370,29 +376,29 @@ def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000
 
 
 _NOT_SALE_SORTS = {
-    "median_price": "median_price",
+    "median_unit_price": "median_unit_price",
     "rarity": "rarity_rank",
     "item": "item_id",
     "type": "item_type",
     "level": "item_level",
     "last_seen": "last_seen",
     "times_listed": "times_listed",
-    "max_price": "max_price",
-    "min_price": "min_price",
+    "max_unit_price": "max_unit_price",
+    "min_unit_price": "min_unit_price",
 }
 
 
 def items_not_on_sale(
     conn: sqlite3.Connection,
     *,
-    order: str = "median_price",
+    order: str = "median_unit_price",
     direction: str = "desc",
 ) -> list[dict]:
     """Items seen historically that have **no active listing right now**.
 
-    Each row carries the item's historical price stats so traders can see what
-    is currently unavailable and what it traded for.  ``order`` is one of
-    :data:`_NOT_SALE_SORTS`.
+    Each row carries the item's historical price stats (per unit, so stack
+    sizes stay comparable) so traders can see what is currently unavailable
+    and what it traded for.  ``order`` is one of :data:`_NOT_SALE_SORTS`.
     """
     latest = latest_snapshot(conn)
     if latest is None:
@@ -403,14 +409,17 @@ def items_not_on_sale(
     for r in conn.execute(
         """
         SELECT item_id, item_type, item_level,
-               COUNT(*) AS times_listed, MIN(item_price) AS min_price, MAX(item_price) AS max_price
+               COUNT(*) AS times_listed, MIN(item_price * 1.0 / item_count) AS min_price, MAX(item_price * 1.0 / item_count) AS max_price
         FROM listings
         GROUP BY item_id
         """
     ):
         if r["item_id"] in active_ids:
             continue
-        prices = [p["item_price"] for p in conn.execute("SELECT item_price FROM listings WHERE item_id = ? ORDER BY item_price", (r["item_id"],))]
+        prices = [
+            p["item_price"] / max(p["item_count"], 1)
+            for p in conn.execute("SELECT item_price, item_count FROM listings WHERE item_id = ? ORDER BY item_price", (r["item_id"],))
+        ]
         last = conn.execute(
             """
             SELECT s.captured_at AS last_seen, l.item_type AS t, l.item_level AS lvl
@@ -427,15 +436,15 @@ def items_not_on_sale(
                 "item_level": last["lvl"] if last else r["item_level"],
                 "rarity": rar[1] if rar else None,
                 "rarity_rank": rar[0] if rar else 0,
-                "median_price": median(prices),
-                "min_price": r["min_price"],
-                "max_price": r["max_price"],
+                "median_unit_price": median(prices),
+                "min_unit_price": r["min_price"],
+                "max_unit_price": r["max_price"],
                 "times_listed": r["times_listed"],
                 "last_seen": last["last_seen"] if last else None,
             }
         )
 
-    col = _NOT_SALE_SORTS.get(order, "median_price")
+    col = _NOT_SALE_SORTS.get(order, "median_unit_price")
     if col in ("item_id", "item_type", "last_seen"):
         key = lambda d: d[col]
     else:
@@ -501,7 +510,7 @@ _BEST_SELLER_SORTS = {
     "type": "item_type",
     "level": "item_level",
     "active_count": "active_count",
-    "current_median_price": "current_median_price",
+    "current_median_unit_price": "current_median_unit_price",
     "min_time": "min_time",
     "max_time": "max_time",
     "expired": "expired",
@@ -542,7 +551,7 @@ def best_sellers(
     txs: dict[int, dict] = {}
     items: dict[str, dict] = {}
     for r in conn.execute(
-        "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, seconds_till_expiry "
+        "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, item_count, seconds_till_expiry "
         "FROM listings ORDER BY transaction_id, snapshot_id"
     ):
         t = txs.get(r["transaction_id"])
@@ -551,12 +560,12 @@ def best_sellers(
                 "first_sid": r["snapshot_id"],
                 "last_sid": r["snapshot_id"],
                 "item_id": r["item_id"],
-                "price": r["item_price"],
+                "unit_price": r["item_price"] / max(r["item_count"], 1),
                 "expiry": r["seconds_till_expiry"],
             }
         else:
             t["last_sid"] = r["snapshot_id"]
-            t["price"] = r["item_price"]
+            t["unit_price"] = r["item_price"] / max(r["item_count"], 1)
             t["expiry"] = r["seconds_till_expiry"]
         items.setdefault(
             r["item_id"],
@@ -567,7 +576,7 @@ def best_sellers(
         it = items[t["item_id"]]
         it["last_seen"] = max(it["last_seen"], snap_times[t["last_sid"]])
         if tx in active_txs:
-            it["active_prices"].append(t["price"])
+            it["active_prices"].append(t["unit_price"])
             continue
         if t["expiry"] < EXPIRY_WINDOW_SECONDS:
             it["expired"] += 1
@@ -598,7 +607,7 @@ def best_sellers(
                 "min_time": min(it["timed"]) if it["timed"] else None,
                 "max_time": max(it["timed"]) if it["timed"] else None,
                 "active_count": len(it["active_prices"]),
-                "current_median_price": median(it["active_prices"]) if it["active_prices"] else None,
+                "current_median_unit_price": median(it["active_prices"]) if it["active_prices"] else None,
                 "last_seen": it["last_seen"],
             }
         )
@@ -621,9 +630,9 @@ _BEST_VALUE_SORTS = {
     "item": "item_id",
     "type": "item_type",
     "level": "item_level",
-    "median_price": "median_price",
-    "current_median_price": "current_median_price",
-    "current_min_price": "current_min_price",
+    "median_unit_price": "median_unit_price",
+    "current_median_unit_price": "current_median_unit_price",
+    "current_min_unit_price": "current_min_unit_price",
     "cheaper_than_pct": "cheaper_than_pct",
     "active_count": "active_count",
     "times_listed": "times_listed",
@@ -639,22 +648,24 @@ def best_value(
 ) -> list[dict]:
     """Items ranked by how cheap they are for their rarity ("best value").
 
-    For every rarity tier the reference price is the median of the items'
-    historical median prices (each item counts once).  An item's value ratio
-    is ``tier_reference / effective_price``, where the effective price is the
-    item's current median when it is on sale now and its historical median
-    otherwise — a ratio of 2 means it trades at half the typical price of its
-    rarity.  ``cheaper_than_pct`` is the share (0..100) of same-rarity items
-    whose median price is at least this item's, i.e. how cheap the item ranks
-    within its rarity.  Items without a rarity suffix are excluded unless
-    ``include_unrated`` is set.
+    Prices are per unit (item_price / item_count) so stack sizes stay
+    comparable.  For every rarity tier the reference price is the median of
+    the items' historical median unit prices (each item counts once).  An
+    item's value ratio is ``tier_reference / effective_price``, where the
+    effective price is the item's current median unit price when it is on
+    sale now and its historical median otherwise — a ratio of 2 means it
+    trades at half the typical price of its rarity.  ``cheaper_than_pct`` is
+    the share (0..100) of same-rarity items whose median unit price is at
+    least this item's, i.e. how cheap the item ranks within its rarity.
+    Items without a rarity suffix are excluded unless ``include_unrated`` is
+    set.
     """
     latest = latest_snapshot(conn)
     if latest is None:
         return []
 
     items: dict[str, dict] = {}
-    for r in conn.execute("SELECT item_id, item_type, item_level, item_price, snapshot_id FROM listings ORDER BY item_id, snapshot_id"):
+    for r in conn.execute("SELECT item_id, item_type, item_level, item_price, item_count, snapshot_id FROM listings ORDER BY item_id, snapshot_id"):
         it = items.get(r["item_id"])
         if it is None:
             it = items[r["item_id"]] = {
@@ -667,18 +678,18 @@ def best_value(
         else:
             it["item_type"] = r["item_type"]
             it["item_level"] = r["item_level"]
-        it["prices"].append(r["item_price"])
+        it["prices"].append(r["item_price"] / max(r["item_count"], 1))
         it["times_listed"] += 1
         if r["snapshot_id"] == latest["id"]:
-            it["active_prices"].append(r["item_price"])
+            it["active_prices"].append(r["item_price"] / max(r["item_count"], 1))
 
     for item_id, it in items.items():
         it["rarity"] = rarity_of(item_id)
-        it["median_price"] = median(it["prices"])
-        it["min_price"] = min(it["prices"])
-        it["max_price"] = max(it["prices"])
-        it["current_median_price"] = median(it["active_prices"]) if it["active_prices"] else None
-        it["current_min_price"] = min(it["active_prices"]) if it["active_prices"] else None
+        it["median_unit_price"] = median(it["prices"])
+        it["min_unit_price"] = min(it["prices"])
+        it["max_unit_price"] = max(it["prices"])
+        it["current_median_unit_price"] = median(it["active_prices"]) if it["active_prices"] else None
+        it["current_min_unit_price"] = min(it["active_prices"]) if it["active_prices"] else None
         it["active_count"] = len(it["active_prices"])
 
     tiers: dict[int, list[float]] = {}
@@ -686,7 +697,7 @@ def best_value(
         rank = it["rarity"][0] if it["rarity"] else 0
         if rank == 0 and not include_unrated:
             continue
-        tiers.setdefault(rank, []).append(it["median_price"])
+        tiers.setdefault(rank, []).append(it["median_unit_price"])
     tier_ref = {rank: median(ps) for rank, ps in tiers.items()}
 
     out = []
@@ -695,9 +706,9 @@ def best_value(
         if rank == 0 and not include_unrated:
             continue
         ref = tier_ref[rank]
-        effective = it["current_median_price"] if it["current_median_price"] is not None else it["median_price"]
+        effective = it["current_median_unit_price"] if it["current_median_unit_price"] is not None else it["median_unit_price"]
         tier_medians = tiers[rank]
-        pct = 100.0 * sum(1 for m in tier_medians if m >= it["median_price"]) / len(tier_medians)
+        pct = 100.0 * sum(1 for m in tier_medians if m >= it["median_unit_price"]) / len(tier_medians)
         out.append(
             {
                 "item_id": item_id,
@@ -706,11 +717,11 @@ def best_value(
                 "rarity": it["rarity"][1] if it["rarity"] else None,
                 "rarity_rank": rank,
                 "tier_reference_price": round(ref),
-                "median_price": round(it["median_price"]),
-                "min_price": it["min_price"],
-                "max_price": it["max_price"],
-                "current_median_price": round(it["current_median_price"]) if it["current_median_price"] is not None else None,
-                "current_min_price": it["current_min_price"],
+                "median_unit_price": round(it["median_unit_price"]),
+                "min_unit_price": it["min_unit_price"],
+                "max_unit_price": it["max_unit_price"],
+                "current_median_unit_price": round(it["current_median_unit_price"]) if it["current_median_unit_price"] is not None else None,
+                "current_min_unit_price": it["current_min_unit_price"],
                 "active_count": it["active_count"],
                 "times_listed": it["times_listed"],
                 "value_ratio": round(ref / effective, 2) if effective else None,

@@ -74,7 +74,7 @@ def test_item_endpoint_and_404(tmp_path):
 
 
 def test_not_on_sale_endpoint(tmp_path):
-    _, _, body = app_for(tmp_path).handle("/api/not-on-sale", {"order": ["median_price"], "dir": ["desc"]})
+    _, _, body = app_for(tmp_path).handle("/api/not-on-sale", {"order": ["median_unit_price"], "dir": ["desc"]})
     assert "Axe_R_I" in body.decode()
     assert "Sword" not in body.decode()
 
