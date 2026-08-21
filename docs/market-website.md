@@ -79,8 +79,9 @@ The intended deployment puts both components in one namespace:
 
 - **Web app** — a StatefulSet with **exactly one replica** (DuckDB allows one
   writer per file), `--host 0.0.0.0`, the `market.db` file on a PersistentVolume,
-  and `GET /healthz` as the liveness/readiness probe (it does not touch the
-  database).  An **init container** runs
+  `GET /healthz` as the liveness probe and `GET /readyz` as the readiness
+  probe (readiness answers 503 until the database file is initialized and
+  openable).  An **init container** runs
   `python -m aoeo_market.cli init-db --db /data/market.db` first, so the pod
   always starts with a ready, schema-complete database on the volume
   (idempotent — safe on every restart).
@@ -111,6 +112,8 @@ The intended deployment puts both components in one namespace:
 
 | Endpoint | Returns |
 |---|---|
+| `GET /healthz` | liveness probe — always 200 while the process is up |
+| `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |
 | `GET /api/listings?type=&q=&sort=&dir=` | active listings of the latest snapshot |
 | `GET /api/item/<item_id>` | current listings + price history (`series`, `points`) of one item |

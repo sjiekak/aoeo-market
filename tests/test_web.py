@@ -33,13 +33,40 @@ def test_index_and_static_files(tmp_path):
     assert "text/html" in ctype
     assert b"<!doctype html>" in body
     assert b"chart.js" in body
-
     status, ctype, body = app.handle("/static/app.js")
     assert status == 200 and b"api(" in body
     status, _, _ = app.handle("/static/../secret.py")
     assert status == 404
     status, _, _ = app.handle("/no-such-route")
     assert status == 404
+
+
+def test_readyz_with_database(tmp_path):
+    import json
+
+    app = app_for(tmp_path)  # seed() records two snapshots
+    status, _, body = app.handle("/readyz")
+    assert status == 200
+    payload = json.loads(body)
+    assert payload == {"status": "ready", "database": "ok", "snapshots": 2}
+
+
+def test_readyz_missing_database_until_init(tmp_path):
+    import json
+
+    from aoeo_market.cli import main
+
+    db = tmp_path / "missing.db"
+    app = WebApp(str(db))
+    status, _, body = app.handle("/readyz")
+    assert status == 503
+    assert "not initialized" in json.loads(body)["database"]
+
+    # once the init container (init-db) has run, the same app becomes ready
+    assert main(["init-db", "--db", str(db)]) == 0
+    status, _, body = app.handle("/readyz")
+    assert status == 200
+    assert json.loads(body)["snapshots"] == 0
 
 
 def test_overview_endpoint(tmp_path):

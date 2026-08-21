@@ -15,7 +15,10 @@ CronJob that only needs network access to the service.
 
 Endpoints
 ---------
-``GET /healthz``               liveness/readiness probe (no DB access)
+``GET /healthz``               liveness probe (process up; no DB access)
+``GET /readyz``                readiness probe: 200 with database stats when
+                               ``market.db`` is initialized and openable, 503
+                               otherwise (e.g. missing file or lock error)
 ``GET /``                      the dashboard page
 ``GET /api/overview``          snapshot stats, supply history, price histogram,
                                type/rarity breakdown, top price movers
@@ -95,6 +98,8 @@ class WebApp:
         try:
             if path == "/healthz":
                 return 200, _JSON, b'{"status": "ok"}'
+            if path == "/readyz":
+                return self._readyz()
             if path in ("/", "/index.html"):
                 return 200, _STATIC_FILES["index.html"], (STATIC_DIR / "index.html").read_bytes()
             if path.startswith("/static/"):
@@ -202,6 +207,20 @@ class WebApp:
                     raise ValueError(f"listings[{index}].{name} must be an integer")
                 fields[name] = int(value)
         return Listing(**fields)  # type: ignore[arg-type]
+
+    def _readyz(self) -> tuple[int, str, bytes]:
+        """Readiness: the database file exists, opens, and answers queries."""
+        if not Path(self.db_path).exists():
+            return 503, _JSON, json.dumps({"status": "not ready", "database": "not initialized (run init-db)"}).encode()
+        try:
+            conn = store.open_store(self.db_path)
+            try:
+                count = store.snapshot_count(conn)
+            finally:
+                conn.close()
+        except (duckdb.Error, OSError) as exc:
+            return 503, _JSON, json.dumps({"status": "not ready", "database": f"error: {exc}"}).encode()
+        return 200, _JSON, json.dumps({"status": "ready", "database": "ok", "snapshots": count}).encode()
 
     def _conn(self) -> duckdb.DuckDBPyConnection:
         # Before the first snapshot, serve the empty state from an in-memory
