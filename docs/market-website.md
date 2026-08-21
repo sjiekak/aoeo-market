@@ -112,6 +112,7 @@ The intended deployment puts both components in one namespace:
 
 | Endpoint | Returns |
 |---|---|
+| `GET /openapi.json` | the machine-readable OpenAPI 3.0 reference of every endpoint below (generated from the routing metadata) |
 | `GET /healthz` | liveness probe — always 200 while the process is up |
 | `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |

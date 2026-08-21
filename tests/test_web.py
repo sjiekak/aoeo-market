@@ -69,6 +69,35 @@ def test_readyz_missing_database_until_init(tmp_path):
     assert json.loads(body)["snapshots"] == 0
 
 
+def test_openapi_spec_is_served_and_in_sync(tmp_path):
+    import json
+
+    app = app_for(tmp_path)
+    status, ctype, body = app.handle("/openapi.json")
+    assert status == 200
+    assert "application/json" in ctype
+    spec = json.loads(body)
+    assert spec["openapi"].startswith("3.")
+    for path in (
+        "/healthz",
+        "/readyz",
+        "/api/overview",
+        "/api/listings",
+        "/api/item/{item_id}",
+        "/api/not-on-sale",
+        "/api/best-sellers",
+        "/api/best-value",
+        "/api/recently-removed",
+        "/api/snapshot",
+    ):
+        assert path in spec["paths"], path
+    assert "post" in spec["paths"]["/api/snapshot"]
+    # the Listing schema must mirror the payload contract exactly
+    assert set(spec["components"]["schemas"]["Listing"]["properties"]) == set(mk(1).to_dict())
+    # parameter enums come from the live sort whitelists
+    assert spec["paths"]["/api/listings"]["get"]["parameters"][2]["schema"]["enum"] == ["price", "level", "count", "expiry", "item", "type", "seller"]
+
+
 def test_overview_endpoint(tmp_path):
     status, _, body = app_for(tmp_path).handle("/api/overview")
     assert status == 200

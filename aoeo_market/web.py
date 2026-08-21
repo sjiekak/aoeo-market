@@ -13,34 +13,15 @@ That split maps directly onto Kubernetes: the web app runs as a StatefulSet
 pod owning the database volume, and ``fetch --store <url>`` runs as a
 CronJob that only needs network access to the service.
 
-Endpoints
----------
-``GET /healthz``               liveness probe (process up; no DB access)
-``GET /readyz``                readiness probe: 200 with database stats when
-                               ``market.db`` is initialized and openable, 503
-                               otherwise (e.g. missing file or lock error)
-``GET /``                      the dashboard page
-``GET /api/overview``          snapshot stats, supply history, price histogram,
-                               type/rarity breakdown, top price movers
-``GET /api/listings``          active listings of the latest snapshot
-                               (``type``, ``q``, ``sort``, ``dir`` params)
-``GET /api/item/<item_id>``    current listings + full price history of one item
-``GET /api/not-on-sale``       historical items with no active listing right now
-                               (``order``, ``dir`` params)
-``GET /api/best-sellers``      items ranked by observed time-to-sale (fastest
-                               sellers first; ``order``, ``dir``, ``min_sales``)
-``GET /api/best-value``        items ranked by value for their rarity (cheapest
-                               relative to their tier; ``order``, ``dir``,
-                               ``include_unrated``)
-``GET /api/recently-removed``  listings that vanished between the last two
-                               snapshots, classified EXPIRED vs REMOVED
-``POST /api/snapshot``         append one snapshot: JSON body
-                               ``{"listings": [<Listing.to_dict()>…],
-                               "captured_at": <unix seconds, optional>}``
-                               -> ``{"snapshot_id": id, "listings": n}``
-
-The write endpoint is unauthenticated: keep the server on a private network
-or protect it with a reverse proxy when it is reachable beyond localhost.
+Endpoints are documented in the machine-readable OpenAPI 3.0 reference
+served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.openapi`
+from the routing metadata, so it cannot drift from the implementation).
+In short: probes at ``/healthz`` and ``/readyz``; dashboard reads under
+``/api/*`` (overview, listings, item history, not-on-sale, best-sellers,
+best-value, recently-removed); the single write endpoint
+``POST /api/snapshot`` (unauthenticated — keep the server on a private
+network or protect it with a reverse proxy when it is reachable beyond
+localhost).
 """
 
 from __future__ import annotations
@@ -55,7 +36,7 @@ from pathlib import Path
 
 import duckdb
 
-from . import store
+from . import openapi, store
 from .market import Listing
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -96,6 +77,8 @@ class WebApp:
         """Route one GET and return ``(status, content_type, body)``."""
         query = query or {}
         try:
+            if path == "/openapi.json":
+                return 200, _JSON, openapi.spec_json()
             if path == "/healthz":
                 return 200, _JSON, b'{"status": "ok"}'
             if path == "/readyz":
