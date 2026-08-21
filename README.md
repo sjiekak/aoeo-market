@@ -4,7 +4,10 @@ A headless client that watches the Age of Empires Online (Project Celeste)
 marketplace and emits events when items are **listed** and **removed**, with a
 best-effort **expired vs. removed** classification: a listing that vanishes
 with less than a day left on its countdown is EXPIRED, anything earlier is
-REMOVED (sold or withdrawn — indistinguishable from the outside).
+REMOVED (sold or withdrawn — indistinguishable from the outside). Hourly
+snapshots can be persisted to SQLite and browsed on the **market website**:
+price distributions and history, items currently not on sale, recent
+sold/expired removals, and other trading intelligence.
 
 ## Quick start (offline, works today)
 
@@ -15,6 +18,8 @@ uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapsho
 uv run python -m aoeo_market.cli probe   --local-ip <your-ip> --game   # live login probe
 uv run python -m aoeo_market.cli fetch  --local-ip <your-ip>              # read the live market
 uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --watch      # stream LISTED/REMOVED events
+uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --store      # snapshot the market into market.db
+uv run python -m aoeo_market.web --db market.db                           # serve the dashboard
 ```
 
 > All Python in this project runs through `uv` and the project-local `.venv`.
@@ -31,6 +36,8 @@ uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --watch      # stre
   remaining, REMOVED otherwise (sold vs. withdrawn is indistinguishable).
 - [Live client](docs/live-client.md) — status of the live login/polling path
   (validated against the real server on 2026-08-17).
+- [Market website](docs/market-website.md) — the SQLite snapshot store, the
+  hourly cron fetch, the dashboard views, and the JSON API.
 
 ## Layout
 
@@ -54,6 +61,9 @@ aoeo_market/
   client.py       live TCP 1510 client
   cli.py          `dump`, `replay`, `probe`, and `fetch` commands
   live_probe.py   live connection probe
+  store.py        SQLite snapshot store + analytics queries
+  web.py          market website (stdlib HTTP server + JSON API)
+  static/         dashboard single-page app (Chart.js)
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,
                   gitignored along with the .pcapng captures

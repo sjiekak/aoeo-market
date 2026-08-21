@@ -23,6 +23,10 @@ wheels/
 *.pcapng
 *.pcapng.gz
 
+# Market snapshot database (created by `fetch --store`)
+market.db
+market.db-*
+
 # Capture-dependent tests and their capture-derived reference data (local-only:
 # the captures they need are not in version control, and the auth ones embed
 # real account data)
