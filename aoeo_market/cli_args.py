@@ -7,11 +7,16 @@ The Celeste Network login arguments (``--local-ip``, ``--email``,
 :mod:`aoeo_market.live_probe`.  The per-install ``--device-hash`` and
 ``--tail`` defaults are the captured constants from :mod:`aoeo_market.auth`,
 set here so the commands themselves never infer them.
+
+``--local-ip`` is optional: when it is omitted, the locally detected IPv4
+address (:func:`detect_local_ip`) is used as the default, exactly the value
+the kernel would source packets to the Celeste Network host with.
 """
 
 from __future__ import annotations
 
 import argparse
+import socket
 
 from . import auth
 from .constants import (
@@ -21,13 +26,44 @@ from .constants import (
 )
 
 
-def add_login_args(
-    parser: argparse.ArgumentParser,
-    *,
-    local_ip_help: str = "your local IPv4 address",
-) -> None:
+def detect_local_ip(
+    host: str = CELESTE_NETWORK_HOST,
+    port: int = CELESTE_NETWORK_PORT,
+) -> str:
+    """Return this machine's local IPv4 address as chosen by the kernel route.
+
+    Connects a UDP socket to ``host:port`` — nothing is sent — and reads the
+    local address the kernel picks as the packet source: the same IPv4 the
+    game embeds in the login tail.  Raises :class:`OSError` when no usable
+    IPv4 route exists (e.g. the machine is offline), so callers can fall back
+    to an explicit ``--local-ip``.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect((host, port))
+        return sock.getsockname()[0]
+
+
+def resolve_local_ip(parser: argparse.ArgumentParser, value: str | None) -> str:
+    """Return the explicit ``--local-ip`` *value*, or the locally detected default.
+
+    Reports a parser error (exit status 2) when no value was given and the
+    address cannot be detected, e.g. because the machine has no active IPv4
+    route.
+    """
+    if value:
+        return value
+    try:
+        return detect_local_ip()
+    except OSError as exc:
+        parser.error(f"could not auto-detect the local IPv4 address ({exc}); pass --local-ip <your-ip> explicitly")
+
+
+def add_login_args(parser: argparse.ArgumentParser) -> None:
     """Add the shared Celeste Network login/connection arguments to ``parser``."""
-    parser.add_argument("--local-ip", required=True, help=local_ip_help)
+    parser.add_argument(
+        "--local-ip",
+        help="your local IPv4 address (embedded in the login tail; auto-detected when omitted)",
+    )
     parser.add_argument("--email", help="account email (or $AOEO_EMAIL)")
     parser.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
     parser.add_argument(
