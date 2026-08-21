@@ -22,7 +22,7 @@ import os
 import sys
 
 from . import auth
-from .cli_args import add_login_args, parse_device_hash, parse_tail
+from .cli_args import add_login_args, parse_device_hash, parse_tail, resolve_local_ip
 from .client import MarketClient, Session
 from .constants import (
     CELESTE_NETWORK_HOST,
@@ -129,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         help="also attempt the TCP 1510 login handshake (best-effort)",
     )
     args = p.parse_args(argv)
+    args.local_ip = resolve_local_ip(p, args.local_ip)
     try:
         device_hash = parse_device_hash(args.device_hash)
         opaque = parse_tail(args.tail)

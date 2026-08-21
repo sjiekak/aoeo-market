@@ -75,7 +75,8 @@ The email and password are sent **in plaintext**. The 12-byte tail is built by
 `build_login_tail(local_ip, opaque)`: 4 opaque bytes, the caller's local IPv4
 address (network byte order), then `40 00 00 00`. The `opaque` bytes and the
 device hash are per-install values that callers pass explicitly — no function
-defaults to them.
+defaults to them. The local IPv4 is detected from the kernel route when the
+CLI's `--local-ip` is omitted (`aoeo_market.cli_args.detect_local_ip`).
 
 **Corrected constants** (what the captures actually show):
 
