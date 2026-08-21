@@ -74,7 +74,7 @@ class MarketClient:
 
     _sock: socket.socket | None = field(default=None, init=False)
     _rx: bytes = field(default=b"", init=False)
-    _ctr: int = field(default=1, init=False)  # per-connection message counter
+    _ctr: int = field(default=1, init=False)  # per-connection message counter (wraps within one byte)
     _ctx: bytes = field(default=b"\x00" * 8, init=False)
 
     # -- connection -------------------------------------------------------
@@ -88,8 +88,10 @@ class MarketClient:
             self._sock = None
 
     def _next_ctr(self) -> int:
+        # The frame header's counter is a single byte; wrap instead of
+        # overflowing so long-running --watch sessions keep working.
         s = self._ctr
-        self._ctr += 1
+        self._ctr = (self._ctr + 1) & 0xFF
         return s
 
     def _send(self, channel: int, opcode: int, payload: bytes) -> None:
