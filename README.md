@@ -2,7 +2,9 @@
 
 A headless client that watches the Age of Empires Online (Project Celeste)
 marketplace and emits events when items are **listed** and **removed**, with a
-best-effort **sold vs. expired** classification.
+best-effort **expired vs. removed** classification: a listing that vanishes
+with less than a day left on its countdown is EXPIRED, anything earlier is
+REMOVED (sold or withdrawn — indistinguishable from the outside).
 
 ## Quick start (offline, works today)
 
@@ -10,7 +12,9 @@ best-effort **sold vs. expired** classification.
 uv run pytest                                              # offline test suite
 uv run python -m aoeo_market.cli dump   capture_*.pcapng.gz   # list active listings
 uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapshots -> events
-uv run python -m aoeo_market.live_probe --local-ip <your-ip> --game   # live login probe
+uv run python -m aoeo_market.cli probe   --local-ip <your-ip> --game   # live login probe
+uv run python -m aoeo_market.cli fetch  --local-ip <your-ip>              # read the live market
+uv run python -m aoeo_market.cli fetch  --local-ip <your-ip> --watch      # stream LISTED/REMOVED events
 ```
 
 > All Python in this project runs through `uv` and the project-local `.venv`.
@@ -23,7 +27,8 @@ uv run python -m aoeo_market.live_probe --local-ip <your-ip> --game   # live log
 - [Authentication](docs/authentication.md) — the TCP 4564 "Celeste Network"
   login, the per-install constants, and the 1510/1500 game-service logins.
 - [Observation model](docs/observation.md) — how listed / removed events are
-  classified as sold vs. expired.
+  classified: EXPIRED only when a listing vanishes with less than a day
+  remaining, REMOVED otherwise (sold vs. withdrawn is indistinguishable).
 - [Live client](docs/live-client.md) — status of the live login/polling path
   (validated against the real server on 2026-08-17).
 
@@ -43,11 +48,11 @@ aoeo_market/
   protocol.py     frame codec (ctx/ch/len/flags+op/counter), zlib scanner,
                   login bundle and market sweep builders
   market.py       MarketPlaceItemInfo XML (UTF-8 and UTF-16) -> Listing
-  observer.py     snapshot diff -> LISTED / REMOVED(sold|expired) events
+  observer.py     snapshot diff -> LISTED / REMOVED(expired|removed) events
   pcap_source.py  read listings from a .pcapng (offline data source)
   auth.py         TCP 4564 "Celeste Network" login (email+password -> session)
   client.py       live TCP 1510 client
-  cli.py          `dump`, `replay`, and `probe` commands
+  cli.py          `dump`, `replay`, `probe`, and `fetch` commands
   live_probe.py   live connection probe
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,

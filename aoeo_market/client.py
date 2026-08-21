@@ -13,10 +13,12 @@ your session to the game server:
     * ``username``  - your profile name.
     * ``token``     - the 32-char game session token.
 
-``MarketClient.acquire_session(mail, password)`` obtains all three by logging
-in over the plaintext "Celeste Network" service on TCP 4564, exactly the way
-the game itself (``Spartan.exe`` via ``xlive.dll``) authenticates. See
-:mod:`aoeo_market.auth`.
+``MarketClient.acquire_session(mail, password, local_ip, device_hash=...,
+opaque=...)`` obtains all three by logging in over the plaintext "Celeste
+Network" service on TCP 4564, exactly the way the game itself
+(``Spartan.exe`` via ``xlive.dll``) authenticates. See :mod:`aoeo_market.auth`.
+The ``device_hash`` / ``opaque`` per-install values are required — the caller
+supplies the constants for its machine.
 
 Alternatively you can extract them once from a real login you perform with the
 official launcher (sniff your own 4564 login response, or the 1510 login frame
@@ -44,12 +46,14 @@ from dataclasses import dataclass, field
 
 from . import protocol as proto
 from .constants import (
+    CELESTE_NETWORK_HOST,
+    CELESTE_NETWORK_PORT,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_POLL_INTERVAL,
     GAME_SERVER_HOST,
     GAME_SERVER_PORT,
 )
-from .market import parse_listings
+from .market import Listing, parse_listings
 from .observer import Event, MarketObserver
 
 
@@ -98,18 +102,39 @@ class MarketClient:
         return self._sock.recv(65536)
 
     # -- auth -------------------------------------------------------------
-    def acquire_session(self, mail: str, password: str, local_ip: str) -> Session:
+    def acquire_session(
+        self,
+        mail: str,
+        password: str,
+        local_ip: str,
+        host: str = CELESTE_NETWORK_HOST,
+        port: int = CELESTE_NETWORK_PORT,
+        *,
+        device_hash: str,
+        opaque: bytes,
+    ) -> Session:
         """Log in over the Celeste Network (TCP 4564) and return a Session.
 
         Mirrors what the game does: send email + password in a plaintext login
         packet, read back ``xuid`` / profile name / 32-char token, then
         register the session. See :mod:`aoeo_market.auth`.
+
+        ``device_hash`` and ``opaque`` are the per-install constants for the
+        machine this client runs on (:data:`aoeo_market.auth.DEVICE_HASH` and
+        :data:`aoeo_market.auth.LOGIN_TAIL_OPAQUE`).  They are required — no
+        defaults are inferred here; the CLI layer chooses the values.
         """
         from . import auth
 
-        cn = auth.CelesteNetworkClient()
+        cn = auth.CelesteNetworkClient(host=host, port=port, timeout=self.connect_timeout)
         try:
-            gs = cn.login(mail, password, local_ip)
+            gs = cn.login(
+                mail,
+                password,
+                local_ip,
+                device_hash=device_hash,
+                opaque=opaque,
+            )
         finally:
             cn.close()
         return Session(xuid=gs.xuid, username=gs.username, token=gs.token)
@@ -192,10 +217,19 @@ class MarketClient:
         return parse_listings(merged)
 
     # -- loop -------------------------------------------------------------
-    def poll_once(self, sweep: list[list[int]] | None = None) -> list[Event]:
+    def fetch_listings(self, sweep: list[list[int]] | None = None, budget: float | None = None) -> list[Listing]:
+        """Send the market browse sweep and return the raw active listings.
+
+        One-shot counterpart to :meth:`poll_once` that does not feed the
+        observer: useful for a caller that just wants the current snapshot.
+        """
         self.request_market(sweep)
-        listings = self._drain_listings(budget=min(self.poll_interval, 20.0))
-        return self.observer.observe(listings)
+        if budget is None:
+            budget = min(self.poll_interval, 20.0)
+        return self._drain_listings(budget=budget)
+
+    def poll_once(self, sweep: list[list[int]] | None = None) -> list[Event]:
+        return self.observer.observe(self.fetch_listings(sweep))
 
     def run(self, on_event: Callable[[Event], None]) -> None:
         """Poll forever, invoking *on_event* for each change. Sends keepalives."""
