@@ -8,7 +8,7 @@ uv run python -m aoeo_market.cli fetch  --store --quiet  # snapshot -> market.db
 
 The live commands detect your local IPv4 address as the default; pass
 ``--local-ip <ip>`` to override it.  ``fetch --store`` persists every fetched
-snapshot into the SQLite database that powers the market website
+snapshot into the DuckDB database that powers the market website
 (:mod:`aoeo_market.web`); run it from cron every hour to build the history.
 """
 
@@ -108,18 +108,25 @@ def _probe(args: argparse.Namespace) -> int:
     )
 
 
-def _record_snapshot(conn, listings: list[Listing], label: str) -> None:
+def _record_snapshot(path: str, listings: list[Listing]) -> None:
+    # Open, write, and close immediately: DuckDB allows only one read-write
+    # connection at a time, so the exclusive lock must not be held while the
+    # live fetch runs (it is retried briefly inside open_store).
     from . import store
 
-    store.record_snapshot(conn, listings)
-    print(f"stored {len(listings)} listings -> {label}", file=sys.stderr)
+    conn = store.open_store(path)
+    try:
+        store.record_snapshot(conn, listings)
+    finally:
+        conn.close()
+    print(f"stored {len(listings)} listings -> {path}", file=sys.stderr)
 
 
-def _watch(mc: MarketClient, interval: float, store_conn=None, quiet: bool = False) -> int:
+def _watch(mc: MarketClient, interval: float, store_path: str | None = None, quiet: bool = False) -> int:
     """Prime the observer with the current snapshot, then stream events."""
     listings = mc.fetch_listings()
-    if store_conn is not None:
-        _record_snapshot(store_conn, listings, "watch")
+    if store_path:
+        _record_snapshot(store_path, listings)
     if not quiet:
         _print_listings(listings)
     mc.observer.observe(listings)  # first snapshot: suppress the LISTED flood
@@ -127,8 +134,8 @@ def _watch(mc: MarketClient, interval: float, store_conn=None, quiet: bool = Fal
         mc.ping()
         time.sleep(interval)
         listings = mc.fetch_listings()
-        if store_conn is not None:
-            _record_snapshot(store_conn, listings, "watch")
+        if store_path:
+            _record_snapshot(store_path, listings)
         for ev in mc.observer.observe(listings):
             _print_event(ev)
 
@@ -148,11 +155,6 @@ def _fetch(args: argparse.Namespace) -> int:
         connect_timeout=args.timeout,
         poll_interval=args.interval,
     )
-    store_conn = None
-    if args.store:
-        from . import store
-
-        store_conn = store.open_store(args.store)
     try:
         print(f"Logging in over Celeste Network {args.host}:{args.port} ...", file=sys.stderr)
         session = mc.acquire_session(
@@ -170,10 +172,10 @@ def _fetch(args: argparse.Namespace) -> int:
         )
         mc.login(session)
         if args.watch:
-            return _watch(mc, args.interval, store_conn, args.quiet)
+            return _watch(mc, args.interval, args.store, args.quiet)
         listings = mc.fetch_listings()
-        if store_conn is not None:
-            _record_snapshot(store_conn, listings, args.store)
+        if args.store:
+            _record_snapshot(args.store, listings)
         if not args.quiet:
             _print_listings(listings)
         return 0
@@ -181,8 +183,6 @@ def _fetch(args: argparse.Namespace) -> int:
         print("\ninterrupted", file=sys.stderr)
         return 0
     finally:
-        if store_conn is not None:
-            store_conn.close()
         mc.close()
 
 
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         const="market.db",
         metavar="PATH",
-        help="persist every fetched snapshot into SQLite PATH (default market.db)",
+        help="persist every fetched snapshot into DuckDB PATH (default market.db)",
     )
     f.add_argument(
         "--quiet",

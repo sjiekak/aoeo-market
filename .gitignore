@@ -26,6 +26,7 @@ wheels/
 # Market snapshot database (created by `fetch --store`)
 market.db
 market.db-*
+market.db.wal
 
 # Capture-dependent tests and their capture-derived reference data (local-only:
 # the captures they need are not in version control, and the auth ones embed

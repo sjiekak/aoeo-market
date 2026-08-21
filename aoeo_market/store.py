@@ -1,4 +1,4 @@
-"""Persistent market snapshot store (SQLite).
+"""Persistent market snapshot store (DuckDB).
 
 The live ``fetch --store`` command records one immutable snapshot per run —
 every active listing plus the wall-clock time it was taken — and the website
@@ -6,10 +6,16 @@ reads those snapshots back for the trading-intelligence views.  Snapshots are
 append-only: queries never mutate, so the database can be read by the web
 server while the cron fetch writes.
 
+DuckDB is a single-file, in-process OLAP engine — no server to deploy, and
+the columnar scan engine keeps the analytics fast as the history grows.  The
+web server opens **read-only** connections (many processes may read the same
+file at once); only the cron writer takes the read-write connection, and
+:func:`open_store` briefly retries when the writer's exclusive lock is held.
+
 Schema::
 
-    snapshots(id INTEGER PK, captured_at REAL)          -- one row per fetch
-    listings(snapshot_id FK, transaction_id, ...)       -- active listings per snapshot
+    snapshots(id BIGINT PK, captured_at DOUBLE)        -- one row per fetch
+    listings(snapshot_id, transaction_id, ...)         -- active listings per snapshot
 
 All times are Unix timestamps (UTC seconds).
 """
@@ -17,80 +23,146 @@ All times are Unix timestamps (UTC seconds).
 from __future__ import annotations
 
 import os
-import sqlite3
 import time
 from collections.abc import Iterable, Sequence
+from pathlib import Path
+
+import duckdb
 
 from .market import Listing, rarity_of
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS listings (
-    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
-    transaction_id INTEGER NOT NULL,
-    seller_empire_id INTEGER NOT NULL,
-    buyer_character_id INTEGER NOT NULL,
-    item_id TEXT NOT NULL,
-    item_type TEXT NOT NULL,
-    item_level INTEGER NOT NULL,
-    item_count INTEGER NOT NULL,
-    item_price INTEGER NOT NULL,
-    item_seed INTEGER NOT NULL,
-    seconds_till_expiry INTEGER NOT NULL,
-    PRIMARY KEY (snapshot_id, transaction_id)
-);
-CREATE INDEX IF NOT EXISTS idx_listings_item_price ON listings(item_id, item_price);
-CREATE INDEX IF NOT EXISTS idx_listings_snapshot ON listings(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_listings_item_type ON listings(item_type);
-"""
+_SCHEMA_STATEMENTS = (
+    "CREATE SEQUENCE IF NOT EXISTS snapshots_id_seq",
+    """
+    CREATE TABLE IF NOT EXISTS snapshots (
+        id BIGINT PRIMARY KEY DEFAULT nextval('snapshots_id_seq'),
+        captured_at DOUBLE NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS listings (
+        snapshot_id BIGINT NOT NULL,
+        transaction_id BIGINT NOT NULL,
+        seller_empire_id BIGINT NOT NULL,
+        buyer_character_id BIGINT NOT NULL,
+        item_id VARCHAR NOT NULL,
+        item_type VARCHAR NOT NULL,
+        item_level BIGINT NOT NULL,
+        item_count BIGINT NOT NULL,
+        item_price BIGINT NOT NULL,
+        item_seed BIGINT NOT NULL,
+        seconds_till_expiry BIGINT NOT NULL,
+        PRIMARY KEY (snapshot_id, transaction_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_listings_item_price ON listings(item_id, item_price)",
+    "CREATE INDEX IF NOT EXISTS idx_listings_snapshot ON listings(snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS idx_listings_item_type ON listings(item_type)",
+)
 
 # One day: the observer's expiry window — a listing that vanishes with less
 # than this left on its countdown is read as EXPIRED, otherwise sold/withdrawn.
 EXPIRY_WINDOW_SECONDS = 86400.0
 
+_LOCK_ATTEMPTS = 30
+_LOCK_DELAY = 0.1  # seconds; the writer's exclusive lock is held for milliseconds
 
-def open_store(path: str | os.PathLike) -> sqlite3.Connection:
-    """Open (creating if needed) the snapshot database at *path*."""
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
-    conn.execute("PRAGMA journal_mode=WAL")
+
+def open_store(path: str | os.PathLike, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open the snapshot database at *path* (creating it when writing).
+
+    ``read_only`` connections are meant for the web server: DuckDB allows
+    many processes to read the same file concurrently, while only one process
+    may hold the read-write connection.  Both modes briefly retry when the
+    other side holds the file lock.
+    """
+    path = str(path)
+    if read_only and not Path(path).exists():
+        raise FileNotFoundError(f"database {path!r} does not exist yet; run `fetch --store` to create it")
+    last: Exception | None = None
+    for _ in range(_LOCK_ATTEMPTS):
+        try:
+            conn = duckdb.connect(path, read_only=read_only)
+            if not read_only:
+                for stmt in _SCHEMA_STATEMENTS:
+                    conn.execute(stmt)
+            return conn
+        except duckdb.IOException as exc:
+            if "lock" not in str(exc).lower():
+                raise
+            last = exc
+            time.sleep(_LOCK_DELAY)
+    raise last  # type: ignore[misc]  # retried _LOCK_ATTEMPTS times
+
+
+def open_memory() -> duckdb.DuckDBPyConnection:
+    """Open an in-memory database with the full schema (no data).
+
+    Used by the web server when the snapshot file does not exist yet, so the
+    dashboard renders its empty state instead of erroring.
+    """
+    conn = duckdb.connect(":memory:")
+    for stmt in _SCHEMA_STATEMENTS:
+        conn.execute(stmt)
     return conn
 
 
+def _rows(conn: duckdb.DuckDBPyConnection, sql: str, params: Sequence = ()) -> list[dict]:
+    """Execute *sql* and return the rows as dicts keyed by column name."""
+    cur = conn.execute(sql, list(params))
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def _row(conn: duckdb.DuckDBPyConnection, sql: str, params: Sequence = ()) -> dict | None:
+    rows = _rows(conn, sql, params)
+    return rows[0] if rows else None
+
+
+def _scalar(conn: duckdb.DuckDBPyConnection, sql: str, params: Sequence = ()) -> int | float:
+    cur = conn.execute(sql, list(params))
+    row = cur.fetchone()
+    return row[0] if row else 0
+
+
 def record_snapshot(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     listings: Iterable[Listing],
     captured_at: float | None = None,
 ) -> int:
     """Append one snapshot of *listings* and return its snapshot id."""
     if captured_at is None:
         captured_at = time.time()
-    cur = conn.execute("INSERT INTO snapshots(captured_at) VALUES (?)", (captured_at,))
-    snapshot_id = cur.lastrowid
-    conn.executemany(
-        "INSERT INTO listings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            (
-                snapshot_id,
-                l.transaction_id,
-                l.seller_empire_id,
-                l.buyer_character_id,
-                l.item_id,
-                l.item_type,
-                l.item_level,
-                l.item_count,
-                l.item_price,
-                l.item_seed,
-                l.seconds_till_expiry,
+    rows = [
+        (
+            l.transaction_id,
+            l.seller_empire_id,
+            l.buyer_character_id,
+            l.item_id,
+            l.item_type,
+            l.item_level,
+            l.item_count,
+            l.item_price,
+            l.item_seed,
+            l.seconds_till_expiry,
+        )
+        for l in listings
+    ]
+    rows = list(rows)
+    # Explicit transaction: DuckDB's connection context manager CLOSES the
+    # connection on exit, unlike sqlite3's.
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        snapshot_id = conn.execute("INSERT INTO snapshots(captured_at) VALUES (?) RETURNING id", [captured_at]).fetchone()[0]
+        if rows:
+            conn.executemany(
+                "INSERT INTO listings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [(snapshot_id, *row) for row in rows],
             )
-            for l in listings
-        ],
-    )
-    conn.commit()
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     return snapshot_id
 
 
@@ -109,24 +181,22 @@ def median(values: Sequence[int]) -> float:
 # --- snapshot helpers ------------------------------------------------------
 
 
-def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute("SELECT id, captured_at FROM snapshots ORDER BY id DESC LIMIT 1").fetchone()
-    return {"id": row["id"], "captured_at": row["captured_at"]} if row else None
+def latest_snapshot(conn: duckdb.DuckDBPyConnection) -> dict | None:
+    return _row(conn, "SELECT id, captured_at FROM snapshots ORDER BY id DESC LIMIT 1")
 
 
-def previous_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> dict | None:
-    row = conn.execute("SELECT id, captured_at FROM snapshots WHERE id < ? ORDER BY id DESC LIMIT 1", (snapshot_id,)).fetchone()
-    return {"id": row["id"], "captured_at": row["captured_at"]} if row else None
+def previous_snapshot(conn: duckdb.DuckDBPyConnection, snapshot_id: int) -> dict | None:
+    return _row(conn, "SELECT id, captured_at FROM snapshots WHERE id < ? ORDER BY id DESC LIMIT 1", [snapshot_id])
 
 
-def snapshot_count(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+def snapshot_count(conn: duckdb.DuckDBPyConnection) -> int:
+    return int(_scalar(conn, "SELECT COUNT(*) FROM snapshots"))
 
 
 # --- listing views ---------------------------------------------------------
 
 
-def _listing_dict(row: sqlite3.Row) -> dict:
+def _listing_dict(row: dict) -> dict:
     d = dict(row)
     rar = rarity_of(d["item_id"])
     d["rarity"] = rar[1] if rar else None
@@ -149,7 +219,7 @@ _SORT_COLUMNS = {
 
 
 def active_listings(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     snapshot_id: int | None = None,
     *,
     item_type: str | None = None,
@@ -171,15 +241,12 @@ def active_listings(
         where += " AND item_type = ?"
         params.append(item_type)
     if q:
-        where += " AND item_id LIKE ?"
+        where += " AND item_id ILIKE ?"
         params.append(f"%{q}%")
     col = _SORT_COLUMNS.get(sort, "item_price")
     if direction not in ("asc", "desc"):
         direction = "asc"
-    rows = conn.execute(
-        f"SELECT * FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id",
-        params,
-    ).fetchall()
+    rows = _rows(conn, f"SELECT * FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
     return [_listing_dict(r) for r in rows]
 
 
@@ -200,7 +267,7 @@ _PRICE_BINS: tuple[tuple[int, str], ...] = (
 )
 
 
-def market_overview(conn: sqlite3.Connection, top_movers: int = 15) -> dict:
+def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15) -> dict:
     """Aggregate stats for the dashboard's overview tab."""
     latest = latest_snapshot(conn)
     if latest is None:
@@ -217,25 +284,26 @@ def market_overview(conn: sqlite3.Connection, top_movers: int = 15) -> dict:
         }
     sid = latest["id"]
 
-    active = conn.execute("SELECT COUNT(*) FROM listings WHERE snapshot_id = ?", (sid,)).fetchone()[0]
-    distinct = conn.execute("SELECT COUNT(DISTINCT item_id) FROM listings WHERE snapshot_id = ?", (sid,)).fetchone()[0]
-    types = conn.execute(
+    active = int(_scalar(conn, "SELECT COUNT(*) FROM listings WHERE snapshot_id = ?", [sid]))
+    distinct = int(_scalar(conn, "SELECT COUNT(DISTINCT item_id) FROM listings WHERE snapshot_id = ?", [sid]))
+    types = _rows(
+        conn,
         "SELECT item_type AS name, COUNT(*) AS count FROM listings WHERE snapshot_id = ? GROUP BY item_type ORDER BY count DESC",
-        (sid,),
-    ).fetchall()
-    prices = [r["item_price"] / max(r["item_count"], 1) for r in conn.execute("SELECT item_price, item_count FROM listings WHERE snapshot_id = ?", (sid,))]
-    supply = conn.execute(
+        [sid],
+    )
+    prices = [r["item_price"] / max(r["item_count"], 1) for r in _rows(conn, "SELECT item_price, item_count FROM listings WHERE snapshot_id = ?", [sid])]
+    supply = _rows(
+        conn,
         """
         SELECT s.captured_at AS t, COUNT(l.transaction_id) AS count
         FROM snapshots s LEFT JOIN listings l ON l.snapshot_id = s.id
-        GROUP BY s.id ORDER BY s.id
-        """
-    ).fetchall()
+        GROUP BY s.id, s.captured_at ORDER BY s.id
+        """,
+    )
 
     # Rarity histogram: rarity letters live in the item id (see market.rarity_of).
-    rarity = conn.execute("SELECT item_id FROM listings WHERE snapshot_id = ?", (sid,)).fetchall()
     rarity_bins: dict[str, int] = {}
-    for r in rarity:
+    for r in _rows(conn, "SELECT item_id FROM listings WHERE snapshot_id = ?", [sid]):
         name = (rarity_of(r["item_id"]) or (0, None))[1] or "unknown"
         rarity_bins[name] = rarity_bins.get(name, 0) + 1
 
@@ -248,8 +316,8 @@ def market_overview(conn: sqlite3.Connection, top_movers: int = 15) -> dict:
         "snapshot_count": snapshot_count(conn),
         "active_listings": active,
         "distinct_items": distinct,
-        "supply_history": [dict(r) for r in supply],
-        "type_breakdown": [dict(r) for r in types],
+        "supply_history": supply,
+        "type_breakdown": types,
         "rarity_breakdown": [{"name": k, "count": v} for k, v in sorted(rarity_bins.items())],
         "price_distribution": _price_histogram(prices),
         "top_movers": movers,
@@ -267,7 +335,7 @@ def _price_histogram(prices: Sequence[int]) -> list[dict]:
     return [{"label": label, "count": counts[i]} for i, (_, label) in enumerate(_PRICE_BINS)]
 
 
-def _price_movers(conn: sqlite3.Connection, sid: int, prev_sid: int | None, top: int) -> list[dict]:
+def _price_movers(conn: duckdb.DuckDBPyConnection, sid: int, prev_sid: int | None, top: int) -> list[dict]:
     """Items whose median price moved most between two snapshots (percent)."""
     if prev_sid is None:
         return []
@@ -291,10 +359,11 @@ def _price_movers(conn: sqlite3.Connection, sid: int, prev_sid: int | None, top:
     return movers[:top]
 
 
-def _median_prices_by_item(conn: sqlite3.Connection, snapshot_id: int) -> dict[str, float]:
-    rows = conn.execute(
+def _median_prices_by_item(conn: duckdb.DuckDBPyConnection, snapshot_id: int) -> dict[str, float]:
+    rows = _rows(
+        conn,
         "SELECT item_id, item_price, item_count FROM listings WHERE snapshot_id = ? ORDER BY item_id, item_price",
-        (snapshot_id,),
+        [snapshot_id],
     )
     out: dict[str, list[int]] = {}
     for r in rows:
@@ -305,7 +374,7 @@ def _median_prices_by_item(conn: sqlite3.Connection, snapshot_id: int) -> dict[s
 # --- per-item history ------------------------------------------------------
 
 
-def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000) -> dict | None:
+def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int = 2000) -> dict | None:
     """Current listings plus the price series of one item across all snapshots.
 
     Prices are per unit (item_price / item_count) so listings of different
@@ -313,7 +382,8 @@ def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000
     observed.  The raw scatter points are downsampled evenly to *max_points*
     so long histories stay chartable.
     """
-    rows = conn.execute(
+    rows = _rows(
+        conn,
         """
         SELECT s.id AS sid, s.captured_at AS t, l.item_price AS price, l.item_count AS count,
                l.item_type AS item_type, l.item_level AS item_level
@@ -321,8 +391,8 @@ def price_history(conn: sqlite3.Connection, item_id: str, max_points: int = 2000
         WHERE l.item_id = ?
         ORDER BY s.id, l.item_price
         """,
-        (item_id,),
-    ).fetchall()
+        [item_id],
+    )
     if not rows:
         return None
 
@@ -389,7 +459,7 @@ _NOT_SALE_SORTS = {
 
 
 def items_not_on_sale(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     *,
     order: str = "median_unit_price",
     direction: str = "desc",
@@ -403,31 +473,33 @@ def items_not_on_sale(
     latest = latest_snapshot(conn)
     if latest is None:
         return []
-    active_ids = {r["item_id"] for r in conn.execute("SELECT DISTINCT item_id FROM listings WHERE snapshot_id = ?", (latest["id"],))}
+    active_ids = {r["item_id"] for r in _rows(conn, "SELECT DISTINCT item_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
 
     out: list[dict] = []
-    for r in conn.execute(
+    for r in _rows(
+        conn,
         """
         SELECT item_id, item_type, item_level,
                COUNT(*) AS times_listed, MIN(item_price * 1.0 / item_count) AS min_price, MAX(item_price * 1.0 / item_count) AS max_price
         FROM listings
-        GROUP BY item_id
-        """
+        GROUP BY item_id, item_type, item_level
+        """,
     ):
         if r["item_id"] in active_ids:
             continue
         prices = [
             p["item_price"] / max(p["item_count"], 1)
-            for p in conn.execute("SELECT item_price, item_count FROM listings WHERE item_id = ? ORDER BY item_price", (r["item_id"],))
+            for p in _rows(conn, "SELECT item_price, item_count FROM listings WHERE item_id = ? ORDER BY item_price", [r["item_id"]])
         ]
-        last = conn.execute(
+        last = _row(
+            conn,
             """
             SELECT s.captured_at AS last_seen, l.item_type AS t, l.item_level AS lvl
             FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
             WHERE l.item_id = ? ORDER BY s.id DESC LIMIT 1
             """,
-            (r["item_id"],),
-        ).fetchone()
+            [r["item_id"]],
+        )
         rar = rarity_of(r["item_id"])
         out.append(
             {
@@ -453,7 +525,7 @@ def items_not_on_sale(
     return out
 
 
-def recently_removed(conn: sqlite3.Connection) -> list[dict]:
+def recently_removed(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     """Listings that vanished between the two most recent snapshots.
 
     Classified like the live observer: EXPIRED when the listing timed out with
@@ -466,7 +538,8 @@ def recently_removed(conn: sqlite3.Connection) -> list[dict]:
     prev = previous_snapshot(conn, latest["id"])
     if prev is None:
         return []
-    gone = conn.execute(
+    gone = _rows(
+        conn,
         """
         SELECT l.*, s.captured_at AS last_seen
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
@@ -474,8 +547,8 @@ def recently_removed(conn: sqlite3.Connection) -> list[dict]:
             SELECT transaction_id FROM listings WHERE snapshot_id = ?
         )
         """,
-        (prev["id"], latest["id"]),
-    ).fetchall()
+        [prev["id"], latest["id"]],
+    )
     out = []
     for g in gone:
         remaining = g["seconds_till_expiry"]
@@ -519,7 +592,7 @@ _BEST_SELLER_SORTS = {
 
 
 def best_sellers(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     *,
     order: str = "median_time",
     direction: str = "asc",
@@ -542,17 +615,18 @@ def best_sellers(
     latest = latest_snapshot(conn)
     if latest is None:
         return []
-    snaps = conn.execute("SELECT id, captured_at FROM snapshots ORDER BY id").fetchall()
+    snaps = _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")
     first_id = snaps[0]["id"]
     snap_times = {s["id"]: s["captured_at"] for s in snaps}
     snap_ids = [s["id"] for s in snaps]
-    active_txs = {r[0] for r in conn.execute("SELECT transaction_id FROM listings WHERE snapshot_id = ?", (latest["id"],))}
+    active_txs = {r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
 
     txs: dict[int, dict] = {}
     items: dict[str, dict] = {}
-    for r in conn.execute(
+    for r in _rows(
+        conn,
         "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, item_count, seconds_till_expiry "
-        "FROM listings ORDER BY transaction_id, snapshot_id"
+        "FROM listings ORDER BY transaction_id, snapshot_id",
     ):
         t = txs.get(r["transaction_id"])
         if t is None:
@@ -640,7 +714,7 @@ _BEST_VALUE_SORTS = {
 
 
 def best_value(
-    conn: sqlite3.Connection,
+    conn: duckdb.DuckDBPyConnection,
     *,
     order: str = "value_ratio",
     direction: str = "desc",
@@ -665,7 +739,10 @@ def best_value(
         return []
 
     items: dict[str, dict] = {}
-    for r in conn.execute("SELECT item_id, item_type, item_level, item_price, item_count, snapshot_id FROM listings ORDER BY item_id, snapshot_id"):
+    for r in _rows(
+        conn,
+        "SELECT item_id, item_type, item_level, item_price, item_count, snapshot_id FROM listings ORDER BY item_id, snapshot_id",
+    ):
         it = items.get(r["item_id"])
         if it is None:
             it = items[r["item_id"]] = {

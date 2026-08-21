@@ -1,25 +1,31 @@
 # Market website — trading intelligence dashboard
 
 A read-only website over the Project Celeste marketplace: every hour a cron job
-fetches the live market and appends an immutable snapshot to a SQLite database,
+fetches the live market and appends an immutable snapshot to a DuckDB database,
 and the website presents that history as interactive charts and tables.
 
 ## Architecture
 
 ```
-cron ── hourly ──> fetch --store ──> market.db (SQLite, append-only)
+cron ── hourly ──> fetch --store ──> market.db (DuckDB, append-only)
                                           │  read
                                           ▼
                               aoeo_market.web ──> browser (Chart.js dashboard)
 ```
 
-- `aoeo_market/store.py` — the SQLite schema and the snapshot/analytics API.
+- `aoeo_market/store.py` — the DuckDB schema and the snapshot/analytics API.
   Two tables: `snapshots(id, captured_at)` and
   `listings(snapshot_id, transaction_id, …, seconds_till_expiry)`.
-  Writing is append-only; every read runs on its own WAL connection, so the
-  web server and the cron writer can run at the same time.
-- `aoeo_market/web.py` — a stdlib-only HTTP server (`ThreadingHTTPServer`) that
-  serves the dashboard page and a JSON API. No framework dependencies.
+  DuckDB is a single-file, in-process OLAP engine (no server to deploy): the
+  columnar engine keeps the dashboards fast as the history grows, and its SQL
+  surface (medians, percentiles, ILIKE) matches the analytics queries.
+  Writing is append-only; the web server opens **read-only** connections
+  (many processes may read the same file at once), while only the cron writer
+  takes the read-write connection — `open_store` briefly retries the writer's
+  exclusive lock, and `fetch --store` holds it only for the write itself.
+- `aoeo_market/web.py` — a stdlib HTTP server (`ThreadingHTTPServer`) that
+  serves the dashboard page and a JSON API. The only third-party dependency
+  of the whole site is `duckdb`.
 - `aoeo_market/static/` — the single-page dashboard (vanilla JS + Chart.js
   loaded from the jsDelivr CDN).
 
@@ -118,5 +124,5 @@ The API is the stable surface of the website; the frontend is a consumer of it.
   normalizes to `ItemPrice / ItemCount`. The listings and item tables show
   both the unit price and, where relevant, the stack total.
 - The database only grows: `fetch --store` never deletes. To start over,
-  stop the cron job, move `market.db` (and `-wal`/`-shm` sidecars) aside, and
-  run `fetch --store` again.
+  stop the cron job and the web server, move `market.db` (and its
+  `market.db.wal` sidecar, if present) aside, and run `fetch --store` again.

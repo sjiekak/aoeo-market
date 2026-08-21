@@ -23,19 +23,21 @@ Endpoints
 ``GET /api/recently-removed``  listings that vanished between the last two
                                snapshots, classified EXPIRED vs REMOVED
 
-The server only ever reads the database (each request opens its own WAL
-connection), so it can run side by side with the cron fetch that writes it.
+The server only ever reads the database: each request opens its own
+read-only DuckDB connection (many processes may read the same file at once),
+so it can run side by side with the cron fetch that holds the write lock.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import duckdb
 
 from . import store
 
@@ -115,13 +117,17 @@ class WebApp:
             return self._error(404, f"no route for {path!r}")
         except _BadParam as exc:
             return self._error(400, str(exc))
-        except sqlite3.Error as exc:
+        except duckdb.Error as exc:
             return self._error(500, f"database error: {exc}")
         except OSError as exc:
             return self._error(500, f"io error: {exc}")
 
-    def _conn(self) -> sqlite3.Connection:
-        return store.open_store(self.db_path)
+    def _conn(self) -> duckdb.DuckDBPyConnection:
+        # Before the first `fetch --store`, serve the empty state from an
+        # in-memory schema instead of erroring.
+        if not Path(self.db_path).exists():
+            return store.open_memory()
+        return store.open_store(self.db_path, read_only=True)
 
     @staticmethod
     def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
@@ -161,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="aoeo_market.web",
         description="Serve the market intelligence dashboard over the snapshot database.",
     )
-    p.add_argument("--db", default="market.db", help="SQLite snapshot database (default market.db)")
+    p.add_argument("--db", default="market.db", help="DuckDB snapshot database (default market.db)")
     p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="port (default 8000)")
     args = p.parse_args(argv)
