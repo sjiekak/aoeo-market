@@ -2,7 +2,23 @@
 
 import pytest
 
-from aoeo_market.market import rarity_of
+from aoeo_market.market import Listing, rarity_of
+
+
+def test_listing_to_dict_roundtrip():
+    listing = Listing(
+        transaction_id=1,
+        seller_empire_id=7,
+        buyer_character_id=-1,
+        item_id="X_E_I",
+        item_type="Trait",
+        item_level=2,
+        item_count=3,
+        item_price=4,
+        item_seed=5,
+        seconds_till_expiry=6,
+    )
+    assert Listing(**listing.to_dict()) == listing
 
 
 @pytest.mark.parametrize(

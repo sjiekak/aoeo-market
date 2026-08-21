@@ -82,6 +82,21 @@ class Listing:
     def is_active(self) -> bool:
         return self.buyer_character_id == NO_BUYER
 
+    def to_dict(self) -> dict[str, int | str]:
+        """The JSON payload shape the snapshot API accepts."""
+        return {
+            "transaction_id": self.transaction_id,
+            "seller_empire_id": self.seller_empire_id,
+            "buyer_character_id": self.buyer_character_id,
+            "item_id": self.item_id,
+            "item_type": self.item_type,
+            "item_level": self.item_level,
+            "item_count": self.item_count,
+            "item_price": self.item_price,
+            "item_seed": self.item_seed,
+            "seconds_till_expiry": self.seconds_till_expiry,
+        }
+
 
 def parse_listings(data: bytes) -> list[Listing]:
     """Extract every ``MarketPlaceItemInfo`` record from a decompressed message

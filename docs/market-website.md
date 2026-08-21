@@ -1,17 +1,26 @@
 # Market website — trading intelligence dashboard
 
 A read-only website over the Project Celeste marketplace: every hour a cron job
-fetches the live market and appends an immutable snapshot to a DuckDB database,
+fetches the live market and posts an immutable snapshot to the website's API,
 and the website presents that history as interactive charts and tables.
 
 ## Architecture
 
 ```
-cron ── hourly ──> fetch --store ──> market.db (DuckDB, append-only)
-                                          │  read
-                                          ▼
-                              aoeo_market.web ──> browser (Chart.js dashboard)
+cron ── hourly ──> fetch --store <url> ── POST /api/snapshot ──> aoeo_market.web
+                                                                      │
+                                                                      ▼
+                                                              market.db (DuckDB, append-only)
+                                                                      │
+                                                                      ▼
+                                                            browser (Chart.js dashboard)
 ```
+
+The **web server is the single owner of the database**: the fetcher never
+opens the file, it only POSTs JSON. That keeps DuckDB's one-writer model
+trivially satisfied and maps directly onto Kubernetes — the web app runs as a
+**StatefulSet** pod owning the database volume, and `fetch --store <url>`
+runs as a **CronJob** that only needs network access to the service.
 
 - `aoeo_market/store.py` — the DuckDB schema and the snapshot/analytics API.
   Two tables: `snapshots(id, captured_at)` and
@@ -19,25 +28,25 @@ cron ── hourly ──> fetch --store ──> market.db (DuckDB, append-only)
   DuckDB is a single-file, in-process OLAP engine (no server to deploy): the
   columnar engine keeps the dashboards fast as the history grows, and its SQL
   surface (medians, percentiles, ILIKE) matches the analytics queries.
-  Writing is append-only; the web server opens **read-only** connections
-  (many processes may read the same file at once), while only the cron writer
-  takes the read-write connection — `open_store` briefly retries the writer's
-  exclusive lock, and `fetch --store` holds it only for the write itself.
 - `aoeo_market/web.py` — a stdlib HTTP server (`ThreadingHTTPServer`) that
-  serves the dashboard page and a JSON API. The only third-party dependency
-  of the whole site is `duckdb`.
+  serves the dashboard page and a JSON API, including the
+  `POST /api/snapshot` write endpoint (validated, serialized by a write
+  lock).  The only third-party dependency of the whole site is `duckdb`.
+- `aoeo_market/cli.py` — `fetch --store` accepts either the web URL (POST)
+  or a local DuckDB file path (development fallback; the file form is not
+  meant for production, where only the web pod owns the volume).
 - `aoeo_market/static/` — the single-page dashboard (vanilla JS + Chart.js
   loaded from the jsDelivr CDN).
 
 ## Setup
 
 ```bash
-# 1. snapshot the market once (writes market.db; add --local-ip <ip> if needed)
-uv run python -m aoeo_market.cli fetch --local-ip <ip> --store --quiet
-
-# 2. serve the dashboard
+# 1. serve the dashboard (sole owner of market.db)
 uv run python -m aoeo_market.web --db market.db --port 8000
 # -> http://127.0.0.1:8000
+
+# 2. snapshot the market once through its API (add --local-ip <ip> if needed)
+uv run python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet
 ```
 
 ### Cron (hourly snapshots)
@@ -45,23 +54,27 @@ uv run python -m aoeo_market.web --db market.db --port 8000
 Edit your crontab (`crontab -e`) and add one line, substituting the real paths:
 
 ```
-0 * * * * cd /home/you/aoeo-market && /usr/bin/env AOEO_EMAIL=you@example.com AOEO_PASSWORD=secret .venv/bin/python -m aoeo_market.cli fetch --local-ip <ip> --store --quiet >> fetch.log 2>&1
+0 * * * * cd /home/you/aoeo-market && /usr/bin/env AOEO_EMAIL=you@example.com AOEO_PASSWORD=secret .venv/bin/python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet >> fetch.log 2>&1
 ```
 
 - Runs at minute 0 of every hour; `--quiet` keeps the log to one line per run
-  (`stored N listings -> market.db`).
+  (`stored N listings -> http://… (snapshot id …)`).
+- The fetcher exits non-zero when the POST fails, so cron reports problems.
 - Credentials come from `AOEO_EMAIL` / `AOEO_PASSWORD` (or `--email` /
   `--password`, or an interactive prompt — not available under cron).
-- `--store` without a path writes `market.db` in the working directory, the
-  same default the web server reads.
+- `--store <path>` (no `http`) still writes a local DuckDB file directly —
+  handy for development, but it must not run against the web server's file.
 - Prefer a cron user account dedicated to the poller: the backend may allow
   only one live session per account (see `docs/live-client.md`), so don't
   reuse the account you play on.
 
 A systemd timer is an alternative (systemd ≥ 2.5x runs `%u` user units);
 `OnCalendar=hourly` with `ExecStart=/home/you/aoeo-market/.venv/bin/python -m
-aoeo_market.cli fetch --local-ip <ip> --store --quiet` in a user service is
-equivalent.
+aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet`
+in a user service is equivalent.  In Kubernetes the same command is the
+CronJob container; the web StatefulSet serves the dashboard and owns the
+`market.db` volume, and the write endpoint is reachable only inside the
+cluster (it is unauthenticated by design — never expose it publicly).
 
 ## Views
 
@@ -86,6 +99,7 @@ equivalent.
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
 | `GET /api/recently-removed` | listings that vanished between the last two snapshots |
+| `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}` |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
 

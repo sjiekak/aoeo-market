@@ -19,7 +19,7 @@ uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapsho
 uv run python -m aoeo_market.cli probe   --game                    # live login probe
 uv run python -m aoeo_market.cli fetch                             # read the live market
 uv run python -m aoeo_market.cli fetch  --watch                    # stream LISTED/REMOVED events
-uv run python -m aoeo_market.cli fetch  --store --quiet            # snapshot the market into market.db
+uv run python -m aoeo_market.cli fetch  --store http://127.0.0.1:8000 --quiet  # snapshot via the web API
 uv run python -m aoeo_market.web --db market.db                    # serve the dashboard
 ```
 

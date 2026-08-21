@@ -117,6 +117,48 @@ def test_best_value_include_unrated(tmp_path):
     assert '"rarity": null' in body.decode()
 
 
+def test_post_snapshot_and_read_back(tmp_path):
+    import json
+
+    app = WebApp(str(tmp_path / "fresh.db"))  # file does not exist yet
+    payload = json.dumps({"listings": [mk(1, item_id="Sword_U_III", price=120).to_dict(), mk(2, item_id="Axe_R_I", price=50).to_dict()]}).encode()
+    status, _, body = app.handle_post("/api/snapshot", payload)
+    assert status == 201
+    assert json.loads(body) == {"snapshot_id": 1, "listings": 2}
+
+    status, _, body = app.handle("/api/overview")
+    overview = json.loads(body)
+    assert overview["snapshot_count"] == 1
+    assert overview["active_listings"] == 2
+    status, _, body = app.handle("/api/listings", {"sort": ["price"]})
+    assert [r["item_id"] for r in json.loads(body)] == ["Axe_R_I", "Sword_U_III"]
+
+
+def test_post_snapshot_captured_at(tmp_path):
+    import json
+
+    app = WebApp(str(tmp_path / "fresh.db"))
+    payload = json.dumps({"listings": [mk(1).to_dict()], "captured_at": 1234.5}).encode()
+    status, _, body = app.handle_post("/api/snapshot", payload)
+    assert status == 201
+    status, _, body = app.handle("/api/overview")
+    assert json.loads(body)["latest"]["captured_at"] == 1234.5
+
+
+def test_post_snapshot_validation(tmp_path):
+    import json
+
+    app = app_for(tmp_path)
+    assert app.handle_post("/api/snapshot", b"not json")[0] == 400
+    assert app.handle_post("/api/snapshot", json.dumps({"nope": 1}).encode())[0] == 400
+    assert app.handle_post("/api/snapshot", json.dumps({"listings": [{}]}).encode())[0] == 400
+    bad = mk(1).to_dict()
+    bad["item_price"] = "lots"
+    assert app.handle_post("/api/snapshot", json.dumps({"listings": [bad]}).encode())[0] == 400
+    assert app.handle_post("/api/snapshot", json.dumps({"listings": [mk(1).to_dict()], "captured_at": "x"}).encode())[0] == 400
+    assert app.handle_post("/api/nope", b"{}")[0] == 404
+
+
 def test_recently_removed_endpoint(tmp_path):
     _, _, body = app_for(tmp_path).handle("/api/recently-removed")
     assert "Axe_R_I" in body.decode()

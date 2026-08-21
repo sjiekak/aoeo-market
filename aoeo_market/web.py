@@ -1,9 +1,17 @@
 """Market intelligence website (stdlib-only web server).
 
 Serves the dashboard single-page app from :mod:`aoeo_market.static` and a
-JSON API over the snapshot database written by ``fetch --store``::
+JSON API over the snapshot database.  This process is the **single owner** of
+the DuckDB file: the ``fetch --store`` CLI posts each snapshot to
+``POST /api/snapshot`` instead of touching the database itself, so exactly
+one component ever opens the file (read-write, per request)::
 
     uv run python -m aoeo_market.web --db market.db --port 8000
+    uv run python -m aoeo_market.cli fetch --store http://127.0.0.1:8000
+
+That split maps directly onto Kubernetes: the web app runs as a StatefulSet
+pod owning the database volume, and ``fetch --store <url>`` runs as a
+CronJob that only needs network access to the service.
 
 Endpoints
 ---------
@@ -22,10 +30,13 @@ Endpoints
                                ``include_unrated``)
 ``GET /api/recently-removed``  listings that vanished between the last two
                                snapshots, classified EXPIRED vs REMOVED
+``POST /api/snapshot``         append one snapshot: JSON body
+                               ``{"listings": [<Listing.to_dict()>…],
+                               "captured_at": <unix seconds, optional>}``
+                               -> ``{"snapshot_id": id, "listings": n}``
 
-The server only ever reads the database: each request opens its own
-read-only DuckDB connection (many processes may read the same file at once),
-so it can run side by side with the cron fetch that holds the write lock.
+The write endpoint is unauthenticated: keep the server on a private network
+or protect it with a reverse proxy when it is reachable beyond localhost.
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,11 +52,25 @@ from pathlib import Path
 import duckdb
 
 from . import store
+from .market import Listing
 
 STATIC_DIR = Path(__file__).with_name("static")
 _STATIC_FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
 
 _JSON = "application/json; charset=utf-8"
+
+_LISTING_FIELDS = (
+    "transaction_id",
+    "seller_empire_id",
+    "buyer_character_id",
+    "item_id",
+    "item_type",
+    "item_level",
+    "item_count",
+    "item_price",
+    "item_seed",
+    "seconds_till_expiry",
+)
 
 
 class _BadParam(ValueError):
@@ -52,10 +78,15 @@ class _BadParam(ValueError):
 
 
 class WebApp:
-    """Routing + JSON API over one snapshot database."""
+    """Routing + JSON API over one snapshot database (sole writer)."""
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        # DuckDB forbids mixing read-only and read-write connections to the
+        # same file in one process, so every connection here is read-write;
+        # this process is the single owner of the file by design.  The lock
+        # serializes snapshot writes between request threads.
+        self._write_lock = threading.Lock()
 
     def handle(self, path: str, query: dict[str, list[str]] | None = None) -> tuple[int, str, bytes]:
         """Route one GET and return ``(status, content_type, body)``."""
@@ -122,12 +153,59 @@ class WebApp:
         except OSError as exc:
             return self._error(500, f"io error: {exc}")
 
+    def handle_post(self, path: str, body: bytes) -> tuple[int, str, bytes]:
+        """Route one POST (the snapshot write API) and return the response."""
+        if path != "/api/snapshot":
+            return self._error(404, f"no route for {path!r}")
+        try:
+            payload = json.loads(body or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return self._error(400, f"invalid JSON: {exc}")
+        if not isinstance(payload, dict) or not isinstance(payload.get("listings"), list):
+            return self._error(400, 'payload must be {"listings": [...]}')
+        captured_at = payload.get("captured_at")
+        if captured_at is not None and (isinstance(captured_at, bool) or not isinstance(captured_at, (int, float))):
+            return self._error(400, "captured_at must be unix seconds or null")
+        try:
+            listings = [self._validate_listing(d, i) for i, d in enumerate(payload["listings"])]
+        except (TypeError, ValueError) as exc:
+            return self._error(400, str(exc))
+        try:
+            with self._write_lock:
+                conn = store.open_store(self.db_path)
+                try:
+                    snapshot_id = store.record_snapshot(conn, listings, captured_at)
+                finally:
+                    conn.close()
+        except (OSError, duckdb.Error) as exc:
+            return self._error(500, f"database error: {exc}")
+        return 201, _JSON, json.dumps({"snapshot_id": snapshot_id, "listings": len(listings)}).encode()
+
+    @staticmethod
+    def _validate_listing(raw: dict, index: int) -> Listing:
+        if not isinstance(raw, dict):
+            raise TypeError(f"listings[{index}] must be an object")
+        fields: dict[str, int | str] = {}
+        for name in _LISTING_FIELDS:
+            if name not in raw:
+                raise ValueError(f"listings[{index}] is missing {name!r}")
+            value = raw[name]
+            if name in ("item_id", "item_type"):
+                if not isinstance(value, str):
+                    raise ValueError(f"listings[{index}].{name} must be a string")
+                fields[name] = value
+            else:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"listings[{index}].{name} must be an integer")
+                fields[name] = int(value)
+        return Listing(**fields)  # type: ignore[arg-type]
+
     def _conn(self) -> duckdb.DuckDBPyConnection:
-        # Before the first `fetch --store`, serve the empty state from an
-        # in-memory schema instead of erroring.
+        # Before the first snapshot, serve the empty state from an in-memory
+        # schema instead of erroring.
         if not Path(self.db_path).exists():
             return store.open_memory()
-        return store.open_store(self.db_path, read_only=True)
+        return store.open_store(self.db_path)
 
     @staticmethod
     def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
@@ -152,6 +230,16 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         status, ctype, body = self.app.handle(parsed.path, urllib.parse.parse_qs(parsed.query))
+        self._respond(status, ctype, body)
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(length) if length else b""
+        parsed = urllib.parse.urlsplit(self.path)
+        status, ctype, resp = self.app.handle_post(parsed.path, body)
+        self._respond(status, ctype, resp)
+
+    def _respond(self, status: int, ctype: str, body: bytes) -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -173,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     if not Path(args.db).exists():
-        print(f"warning: {args.db} does not exist yet; run `fetch --store` to create it", file=sys.stderr)
+        print(f"warning: {args.db} does not exist yet; POST a snapshot to /api/snapshot or run `fetch --store` to create it", file=sys.stderr)
 
     _Handler.app = WebApp(args.db)
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
