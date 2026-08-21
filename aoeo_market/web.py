@@ -15,6 +15,7 @@ CronJob that only needs network access to the service.
 
 Endpoints
 ---------
+``GET /healthz``               liveness/readiness probe (no DB access)
 ``GET /``                      the dashboard page
 ``GET /api/overview``          snapshot stats, supply history, price histogram,
                                type/rarity breakdown, top price movers
@@ -92,6 +93,8 @@ class WebApp:
         """Route one GET and return ``(status, content_type, body)``."""
         query = query or {}
         try:
+            if path == "/healthz":
+                return 200, _JSON, b'{"status": "ok"}'
             if path in ("/", "/index.html"):
                 return 200, _STATIC_FILES["index.html"], (STATIC_DIR / "index.html").read_bytes()
             if path.startswith("/static/"):

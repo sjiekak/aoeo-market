@@ -26,6 +26,8 @@ def app_for(tmp_path) -> WebApp:
 
 def test_index_and_static_files(tmp_path):
     app = app_for(tmp_path)
+    status, ctype, body = app.handle("/healthz")
+    assert status == 200 and body == b'{"status": "ok"}'
     status, ctype, body = app.handle("/")
     assert status == 200
     assert "text/html" in ctype

@@ -71,10 +71,26 @@ Edit your crontab (`crontab -e`) and add one line, substituting the real paths:
 A systemd timer is an alternative (systemd ≥ 2.5x runs `%u` user units);
 `OnCalendar=hourly` with `ExecStart=/home/you/aoeo-market/.venv/bin/python -m
 aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet`
-in a user service is equivalent.  In Kubernetes the same command is the
-CronJob container; the web StatefulSet serves the dashboard and owns the
-`market.db` volume, and the write endpoint is reachable only inside the
-cluster (it is unauthenticated by design — never expose it publicly).
+in a user service is equivalent.
+
+### Kubernetes (same namespace)
+
+The intended deployment puts both components in one namespace:
+
+- **Web app** — a StatefulSet with **exactly one replica** (DuckDB allows one
+  writer per file), `--host 0.0.0.0`, the `market.db` file on a PersistentVolume,
+  and `GET /healthz` as the liveness/readiness probe (it does not touch the
+  database).
+- **Fetcher** — a CronJob (`schedule: "0 * * * *"`) running
+  `python -m aoeo_market.cli fetch --store http://<service>:8000 --quiet`
+  with the credentials in a Secret (`AOEO_EMAIL` / `AOEO_PASSWORD`).  Same
+  namespace means the short Service DNS name works.
+- **Trust boundary** — the `POST /api/snapshot` endpoint is unauthenticated
+  and served on the same port as the dashboard, so the namespace is the
+  security boundary: keep the Service cluster-internal (view the dashboard
+  via `kubectl port-forward` or a VPN), or put basic auth in front of it at
+  the ingress.  A NetworkPolicy restricting the web pod's ingress to the
+  fetcher's pods is the cheap extra hardening.
 
 ## Views
 
