@@ -15,6 +15,8 @@ Endpoints
 ``GET /api/item/<item_id>``    current listings + full price history of one item
 ``GET /api/not-on-sale``       historical items with no active listing right now
                                (``order``, ``dir`` params)
+``GET /api/best-sellers``      items ranked by observed time-to-sale (fastest
+                               sellers first; ``order``, ``dir``, ``min_sales``)
 ``GET /api/recently-removed``  listings that vanished between the last two
                                snapshots, classified EXPIRED vs REMOVED
 
@@ -38,6 +40,10 @@ STATIC_DIR = Path(__file__).with_name("static")
 _STATIC_FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
 
 _JSON = "application/json; charset=utf-8"
+
+
+class _BadParam(ValueError):
+    """Malformed query parameter — reported as HTTP 400."""
 
 
 class WebApp:
@@ -77,6 +83,15 @@ class WebApp:
                         direction=query.get("dir", ["desc"])[0],
                     )
                 )
+            if path == "/api/best-sellers":
+                return self._json(
+                    store.best_sellers(
+                        self._conn(),
+                        order=query.get("order", ["median_time"])[0],
+                        direction=query.get("dir", ["asc"])[0],
+                        min_sales=self._int_param(query, "min_sales", 1),
+                    )
+                )
             if path == "/api/recently-removed":
                 return self._json(store.recently_removed(self._conn()))
             if path.startswith("/api/item/"):
@@ -86,6 +101,8 @@ class WebApp:
                     return self._error(404, f"item {item_id!r} was never observed")
                 return self._json(history)
             return self._error(404, f"no route for {path!r}")
+        except _BadParam as exc:
+            return self._error(400, str(exc))
         except sqlite3.Error as exc:
             return self._error(500, f"database error: {exc}")
         except OSError as exc:
@@ -93,6 +110,16 @@ class WebApp:
 
     def _conn(self) -> sqlite3.Connection:
         return store.open_store(self.db_path)
+
+    @staticmethod
+    def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
+        raw = query.get(name, [None])[0]
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            raise _BadParam(f"{name} must be an integer") from None
 
     def _json(self, payload) -> tuple[int, str, bytes]:
         return 200, _JSON, json.dumps(payload).encode()

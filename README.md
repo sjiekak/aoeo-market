@@ -6,8 +6,9 @@ best-effort **expired vs. removed** classification: a listing that vanishes
 with less than a day left on its countdown is EXPIRED, anything earlier is
 REMOVED (sold or withdrawn — indistinguishable from the outside). Hourly
 snapshots can be persisted to SQLite and browsed on the **market website**:
-price distributions and history, items currently not on sale, recent
-sold/expired removals, and other trading intelligence.
+price distributions and history, best-selling items ranked by time-to-sale,
+items currently not on sale, recent sold/expired removals, and other trading
+intelligence.
 
 ## Quick start (offline, works today)
 

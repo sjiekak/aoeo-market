@@ -488,3 +488,125 @@ def recently_removed(conn: sqlite3.Connection) -> list[dict]:
         )
     out.sort(key=lambda d: d["item_price"], reverse=True)
     return out
+
+
+# --- best sellers ----------------------------------------------------------
+
+
+_BEST_SELLER_SORTS = {
+    "median_time": "median_time",
+    "sales": "sales",
+    "item": "item_id",
+    "rarity": "rarity_rank",
+    "type": "item_type",
+    "level": "item_level",
+    "active_count": "active_count",
+    "current_median_price": "current_median_price",
+    "min_time": "min_time",
+    "max_time": "max_time",
+    "expired": "expired",
+    "last_seen": "last_seen",
+}
+
+
+def best_sellers(
+    conn: sqlite3.Connection,
+    *,
+    order: str = "median_time",
+    direction: str = "asc",
+    min_sales: int = 1,
+) -> list[dict]:
+    """Items ranked by how fast their listings sell — time-to-sale.
+
+    For every listing transaction, the observed lifetime is the time from the
+    first snapshot it appears in to the first snapshot it is absent from.
+    Only listings that vanished with at least a day left on their countdown
+    count as sales (sold or withdrawn — indistinguishable, like the live
+    observer); EXPIRED listings are tracked separately.  Listings already
+    present in the very first snapshot are left-censored — their true listing
+    time is unknown — so they count toward ``sales`` but not toward the time
+    stats.  With hourly snapshots the lifetime is accurate to within one poll
+    interval.
+
+    Only items with at least ``min_sales`` fully observed sales are returned.
+    """
+    latest = latest_snapshot(conn)
+    if latest is None:
+        return []
+    snaps = conn.execute("SELECT id, captured_at FROM snapshots ORDER BY id").fetchall()
+    first_id = snaps[0]["id"]
+    snap_times = {s["id"]: s["captured_at"] for s in snaps}
+    snap_ids = [s["id"] for s in snaps]
+    active_txs = {r[0] for r in conn.execute("SELECT transaction_id FROM listings WHERE snapshot_id = ?", (latest["id"],))}
+
+    txs: dict[int, dict] = {}
+    items: dict[str, dict] = {}
+    for r in conn.execute(
+        "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, seconds_till_expiry "
+        "FROM listings ORDER BY transaction_id, snapshot_id"
+    ):
+        t = txs.get(r["transaction_id"])
+        if t is None:
+            t = txs[r["transaction_id"]] = {
+                "first_sid": r["snapshot_id"],
+                "last_sid": r["snapshot_id"],
+                "item_id": r["item_id"],
+                "price": r["item_price"],
+                "expiry": r["seconds_till_expiry"],
+            }
+        else:
+            t["last_sid"] = r["snapshot_id"]
+            t["price"] = r["item_price"]
+            t["expiry"] = r["seconds_till_expiry"]
+        items.setdefault(
+            r["item_id"],
+            {"item_type": r["item_type"], "item_level": r["item_level"], "sales": 0, "expired": 0, "timed": [], "active_prices": [], "last_seen": 0.0},
+        )
+
+    for tx, t in txs.items():
+        it = items[t["item_id"]]
+        it["last_seen"] = max(it["last_seen"], snap_times[t["last_sid"]])
+        if tx in active_txs:
+            it["active_prices"].append(t["price"])
+            continue
+        if t["expiry"] < EXPIRY_WINDOW_SECONDS:
+            it["expired"] += 1
+            continue
+        it["sales"] += 1
+        if t["first_sid"] == first_id:
+            continue  # left-censored: true listing time unknown
+        next_idx = snap_ids.index(t["last_sid"]) + 1
+        vanished_at = snap_times[snap_ids[next_idx]] if next_idx < len(snap_ids) else latest["captured_at"]
+        it["timed"].append(vanished_at - snap_times[t["first_sid"]])
+
+    out = []
+    for item_id, it in items.items():
+        if len(it["timed"]) < min_sales:
+            continue
+        rar = rarity_of(item_id)
+        out.append(
+            {
+                "item_id": item_id,
+                "item_type": it["item_type"],
+                "item_level": it["item_level"],
+                "rarity": rar[1] if rar else None,
+                "rarity_rank": rar[0] if rar else 0,
+                "sales": it["sales"],
+                "timed_sales": len(it["timed"]),
+                "expired": it["expired"],
+                "median_time": median(it["timed"]) if it["timed"] else None,
+                "min_time": min(it["timed"]) if it["timed"] else None,
+                "max_time": max(it["timed"]) if it["timed"] else None,
+                "active_count": len(it["active_prices"]),
+                "current_median_price": median(it["active_prices"]) if it["active_prices"] else None,
+                "last_seen": it["last_seen"],
+            }
+        )
+
+    col = _BEST_SELLER_SORTS.get(order, "median_time")
+    if col in ("item_id", "item_type", "last_seen"):
+        key = lambda d: d[col]
+    else:
+        key = lambda d: (d[col] is None, d[col] or 0)
+    out.sort(key=key, reverse=direction == "desc")
+    return out

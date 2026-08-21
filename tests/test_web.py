@@ -79,6 +79,18 @@ def test_not_on_sale_endpoint(tmp_path):
     assert "Sword" not in body.decode()
 
 
+def test_best_sellers_endpoint(tmp_path):
+    app = app_for(tmp_path)
+    # the seed's only sale is left-censored (present in the first snapshot)
+    _, _, body = app.handle("/api/best-sellers")
+    assert body == b"[]"
+    _, _, body = app.handle("/api/best-sellers", {"min_sales": ["0"]})
+    assert "Axe_R_I" in body.decode()
+    assert '"median_time": null' in body.decode()
+    status, _, _ = app.handle("/api/best-sellers", {"min_sales": ["abc"]})
+    assert status == 400
+
+
 def test_recently_removed_endpoint(tmp_path):
     _, _, body = app_for(tmp_path).handle("/api/recently-removed")
     assert "Axe_R_I" in body.decode()

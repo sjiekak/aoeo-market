@@ -188,6 +188,76 @@ def test_overview_counts_histogram_and_movers(tmp_path):
     conn.close()
 
 
+def test_best_sellers_ranks_by_time_to_sale(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    # s1: only a long-lived listing -> its later sale would be left-censored
+    store.record_snapshot(conn, [mk(1, item_id="Old_U_I", price=10, expiry=200_000)], captured_at=1000.0)
+    # s2: Fast and Slow first appear (fully observed from here on)
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Old_U_I", price=10, expiry=200_000),
+            mk(2, item_id="Fast_E_I", price=900, expiry=200_000),
+            mk(3, item_id="Slow_U_I", price=90, expiry=200_000),
+        ],
+        captured_at=4600.0,
+    )
+    # s3: Fast sold (vanished with a long countdown left)
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Old_U_I", price=10, expiry=200_000),
+            mk(3, item_id="Slow_U_I", price=90, expiry=200_000),
+        ],
+        captured_at=8200.0,
+    )
+    # s4: Slow sold too, and a fresh Fast listing is back on the market
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="Old_U_I", price=10, expiry=200_000), mk(4, item_id="Fast_E_I", price=800, expiry=200_000)],
+        captured_at=11800.0,
+    )
+
+    rows = store.best_sellers(conn)
+    assert [r["item_id"] for r in rows] == ["Fast_E_I", "Slow_U_I"]  # fastest first
+    fast, slow = rows
+    assert fast["median_time"] == 3600.0  # 8200 - 4600 (one hourly gap)
+    assert fast["min_time"] == fast["max_time"] == 3600.0
+    assert fast["timed_sales"] == 1
+    assert fast["rarity"] == "Epic"
+    assert fast["active_count"] == 1  # relisted in s4
+    assert fast["current_median_price"] == 800.0
+    assert slow["median_time"] == 7200.0  # 11800 - 4600 (two gaps)
+    assert slow["active_count"] == 0
+    assert slow["current_median_price"] is None
+
+    rows = store.best_sellers(conn, order="item", direction="asc")
+    assert [r["item_id"] for r in rows] == ["Fast_E_I", "Slow_U_I"]
+    conn.close()
+
+
+def test_best_sellers_censoring_and_expired(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    # s1: Censored already listed (true start unknown), Expiring almost timed out
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="Censored_U_I", price=10, expiry=200_000), mk(2, item_id="Expiring_U_I", price=10, expiry=500)],
+        captured_at=1000.0,
+    )
+    # s2: both gone
+    store.record_snapshot(conn, [], captured_at=4600.0)
+
+    assert store.best_sellers(conn) == []  # no fully observed sale -> filtered out
+    rows = store.best_sellers(conn, min_sales=0)
+    by = {r["item_id"]: r for r in rows}
+    assert by["Censored_U_I"]["sales"] == 1
+    assert by["Censored_U_I"]["timed_sales"] == 0
+    assert by["Censored_U_I"]["median_time"] is None
+    assert by["Expiring_U_I"]["expired"] == 1
+    assert by["Expiring_U_I"]["sales"] == 0
+    conn.close()
+
+
 def test_median():
     assert store.median([]) == 0.0
     assert store.median([7]) == 7.0

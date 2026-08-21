@@ -16,6 +16,7 @@
     <nav>
       <button data-tab="overview" class="active">Overview</button>
       <button data-tab="listings">Listings</button>
+      <button data-tab="best-sellers">Best sellers</button>
       <button data-tab="not-on-sale">Not on sale</button>
       <button data-tab="removed">Recently removed</button>
       <button data-tab="item" id="nav-item" hidden>Item</button>
@@ -73,6 +74,39 @@
           <thead><tr><th>Item</th><th>Type</th><th class="num">Lvl</th><th class="num">Cnt</th><th class="num">Price</th><th class="num">Expires</th><th>Seller</th></tr></thead>
           <tbody id="listings-body"></tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- Best sellers -->
+    <section id="tab-best-sellers" hidden>
+      <p class="muted">
+        Time-to-sale: from the first hourly snapshot a listing appears in to the first one it is absent from,
+        counting only listings that vanished with ≥1 day left on their countdown (sold or withdrawn — indistinguishable).
+        Fastest first; click a column to reorder.
+      </p>
+      <div class="grid-2">
+        <div class="card chart-card"><h2>Fastest sellers (median time-to-sale)</h2><canvas id="chart-best-sellers"></canvas></div>
+        <div class="card">
+          <h2>All items with observed sales <span class="muted">(median of n timed sales)</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th><a data-order="item">Item</a></th>
+                <th><a data-order="type">Type</a></th>
+                <th class="num"><a data-order="level">Lvl</a></th>
+                <th><a data-order="rarity">Rarity</a></th>
+                <th class="num"><a data-order="median_time">Median time-to-sale</a></th>
+                <th class="num"><a data-order="min_time">Min</a></th>
+                <th class="num"><a data-order="max_time">Max</a></th>
+                <th class="num"><a data-order="sales">Sales</a></th>
+                <th class="num"><a data-order="expired">Expired</a></th>
+                <th class="num"><a data-order="active_count">On sale now</a></th>
+                <th class="num"><a data-order="current_median_price">Current median</a></th>
+              </tr>
+            </thead>
+            <tbody id="best-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 

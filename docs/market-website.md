@@ -63,6 +63,7 @@ equivalent.
 |---|---|
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot, with client-side search, type filter and sortable columns. Click an item to open its detail view. |
+| **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished between the last two snapshots, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). |
 | **Item detail** | Full price history of one item: median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
@@ -75,6 +76,7 @@ equivalent.
 | `GET /api/listings?type=&q=&sort=&dir=` | active listings of the latest snapshot |
 | `GET /api/item/<item_id>` | current listings + price history (`series`, `points`) of one item |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
+| `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/recently-removed` | listings that vanished between the last two snapshots |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
@@ -91,6 +93,15 @@ The API is the stable surface of the website; the frontend is a consumer of it.
 - With one snapshot only, the "not on sale" and "recently removed" views are
   empty and the movers table says so — everything fills in from the second
   snapshot onwards.
+- **Time-to-sale** (best sellers) is the observed lifetime of a listing: from
+  the first snapshot it appears in to the first snapshot it is absent from.
+  It counts only listings that vanished with ≥1 day left on their countdown
+  (sold or withdrawn — indistinguishable, like everywhere else); EXPIRED
+  listings are counted separately.  Listings already present in the very first
+  snapshot are left-censored (their true listing time is unknown), so they
+  count toward `sales` but not toward the time stats — the view needs a few
+  hourly snapshots before it fills in, and times are accurate to within one
+  poll interval.
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job, move `market.db` (and `-wal`/`-shm` sidecars) aside, and
   run `fetch --store` again.

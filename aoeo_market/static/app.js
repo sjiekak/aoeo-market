@@ -34,6 +34,11 @@ const fmtInt = (n) => (n == null ? "—" : n.toLocaleString("en-US"));
 const fmtTime = (t) => (t ? new Date(t * 1000).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" }) : "—");
 const fmtDate = (t) => (t ? new Date(t * 1000).toLocaleDateString() : "—");
 const fmtDays = (s) => (s == null ? "—" : (s / 86400).toFixed(1) + "d");
+const fmtDur = (s) => {
+  if (s == null) return "—";
+  const h = s / 3600;
+  return h < 48 ? h.toFixed(1) + " h" : (h / 24).toFixed(1) + " d";
+};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function itemLink(itemId) {
@@ -180,6 +185,58 @@ $("#ls-q").addEventListener("input", renderListings);
 $("#ls-type").addEventListener("change", renderListings);
 $("#ls-sort").addEventListener("change", () => (lsDir = -1, $("#ls-dir").textContent = "↓", renderListings()));
 $("#ls-dir").addEventListener("click", () => (lsDir = -lsDir, $("#ls-dir").textContent = lsDir < 0 ? "↓" : "↑", renderListings()));
+
+/* --- best sellers -------------------------------------------------------- */
+
+let bestOrder = "median_time";
+let bestDir = "asc";
+
+async function loadBestSellersChart() {
+  const rows = await api("/api/best-sellers?order=median_time&dir=asc");
+  const top = rows.slice(0, 10).reverse(); // fastest at the top
+  makeChart("#chart-best-sellers", {
+    type: "bar",
+    data: {
+      labels: top.map((r) => r.item_id.length > 26 ? r.item_id.slice(0, 26) + "…" : r.item_id),
+      datasets: [{ label: "median time-to-sale", data: top.map((r) => r.median_time / 3600), backgroundColor: "#4ade80" }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (i) => fmtDur(i.parsed.x * 3600) } } },
+      scales: { x: { title: { display: true, text: "hours" }, beginAtZero: true } },
+    },
+  });
+}
+
+async function loadBestSellers() {
+  const rows = await api(`/api/best-sellers?order=${bestOrder}&dir=${bestDir}`);
+  document.querySelectorAll("#tab-best-sellers th a").forEach((a) => a.classList.toggle("active", a.dataset.order === bestOrder));
+  $("#best-body").innerHTML = rows
+    .map(
+      (r) => `<tr>
+        <td>${itemLink(r.item_id)} ${rarityBadge(r.rarity)}</td>
+        <td>${esc(r.item_type)}</td>
+        <td class="num">${r.item_level}</td>
+        <td>${esc(r.rarity || "—")}</td>
+        <td class="num"><b>${fmtDur(r.median_time)}</b></td>
+        <td class="num">${fmtDur(r.min_time)}</td>
+        <td class="num">${fmtDur(r.max_time)}</td>
+        <td class="num">${fmtInt(r.timed_sales)}</td>
+        <td class="num">${fmtInt(r.expired)}</td>
+        <td class="num">${fmtInt(r.active_count)}</td>
+        <td class="num">${fmtPrice(r.current_median_price)}</td>
+      </tr>`
+    )
+    .join("") || '<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as hourly snapshots accumulate</td></tr>';
+}
+
+document.querySelectorAll("#tab-best-sellers th a").forEach((a) =>
+  a.addEventListener("click", () => {
+    if (bestOrder === a.dataset.order) bestDir = bestDir === "asc" ? "desc" : "asc";
+    else (bestOrder = a.dataset.order), (bestDir = a.dataset.order === "median_time" || a.dataset.order === "min_time" ? "asc" : "desc");
+    loadBestSellers();
+  })
+);
 
 /* --- not on sale --------------------------------------------------------- */
 
@@ -343,8 +400,12 @@ async function boot() {
   const listings = loadListings().catch((e) => console.error(e));
   await Promise.all([data, listings]);
   showTab("overview");
-  await loadNotOnSale().catch((e) => console.error(e));
-  await loadRemoved().catch((e) => console.error(e));
+  await Promise.all([
+    loadBestSellers().catch((e) => console.error(e)),
+    loadBestSellersChart().catch((e) => console.error(e)),
+    loadNotOnSale().catch((e) => console.error(e)),
+    loadRemoved().catch((e) => console.error(e)),
+  ]);
   route();
 }
 boot();
