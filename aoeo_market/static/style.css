@@ -1,0 +1,149 @@
+:root {
+  --bg: #0f172a;
+  --panel: #1e293b;
+  --panel-2: #27364d;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #fbbf24;
+  --line: #334155;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.brand .muted { font-size: 12px; display: block; }
+
+nav { display: flex; gap: 6px; flex-wrap: wrap; }
+nav button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 14px;
+}
+nav button:hover { color: var(--text); border-color: var(--accent); }
+nav button.active { color: #0f172a; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+main { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+h2 { font-size: 16px; margin: 0 0 12px; }
+.muted { color: var(--muted); font-size: 13px; }
+.link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 14px; margin-bottom: 8px; }
+.link:hover { text-decoration: underline; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.kpi { margin: 0; text-align: center; }
+.kpi-value { font-size: 26px; font-weight: 700; color: var(--accent); }
+.kpi-label { color: var(--muted); font-size: 13px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-2 .wide { grid-column: span 1; }
+@media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.chart-card { height: 380px; position: relative; }
+.chart-card canvas { max-height: 310px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 13px; }
+th a { color: var(--muted); text-decoration: none; cursor: pointer; }
+th a:hover, th a.active { color: var(--accent); }
+tbody tr:hover { background: var(--panel-2); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.item-link { color: #7dd3fc; text-decoration: none; }
+.item-link:hover { text-decoration: underline; }
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.badge.expired { color: #fbbf24; border-color: #fbbf24; }
+.badge.removed { color: #38bdf8; border-color: #38bdf8; }
+
+.up { color: #4ade80; }
+.down { color: #f87171; }
+
+.controls { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.controls input[type="search"] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-width: 260px;
+  font-size: 14px;
+}
+.controls select {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.controls button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.banner {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+.banner code { background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 6px; }
+
+.item-head { margin-bottom: 16px; }
+.item-head h2 { font-size: 22px; margin: 0; word-break: break-all; white-space: normal; }
+.item-head .muted { font-size: 14px; }
+
+footer { text-align: center; padding: 28px; border-top: 1px solid var(--line); }
+footer code { color: var(--accent); }
