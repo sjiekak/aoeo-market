@@ -64,6 +64,7 @@ equivalent.
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot, with client-side search, type filter and sortable columns. Click an item to open its detail view. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
+| **Best value** | Items ranked by **value for their rarity**: how cheap an item trades relative to the typical price of its rarity tier (a 2× ratio means half the typical price). Orderable by ratio, price, "cheaper than %" percentile and more; a bar chart shows the ten best. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished between the last two snapshots, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). |
 | **Item detail** | Full price history of one item: median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
@@ -77,6 +78,7 @@ equivalent.
 | `GET /api/item/<item_id>` | current listings + price history (`series`, `points`) of one item |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
+| `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
 | `GET /api/recently-removed` | listings that vanished between the last two snapshots |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
@@ -102,6 +104,14 @@ The API is the stable surface of the website; the frontend is a consumer of it.
   count toward `sales` but not toward the time stats — the view needs a few
   hourly snapshots before it fills in, and times are accurate to within one
   poll interval.
+- **Value for rarity** (best value) compares each item against its own rarity
+  tier: the tier's reference price is the median of its items' historical
+  median prices (each item counts once), and the value ratio is
+  reference ÷ price (current median while the item is on sale, historical
+  median otherwise), so 2× means half the typical price of that rarity. The
+  "cheaper than" column is the item's price percentile within its tier.
+  Untagged items (materials and most consumables) are excluded by default —
+  the `include_unrated` API flag adds them as their own tier.
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job, move `market.db` (and `-wal`/`-shm` sidecars) aside, and
   run `fetch --store` again.

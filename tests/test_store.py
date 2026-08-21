@@ -258,6 +258,50 @@ def test_best_sellers_censoring_and_expired(tmp_path):
     conn.close()
 
 
+def test_best_value_ranks_cheap_for_rarity(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            # Epic tier: CheapEpic 1000 vs PriceyEpic 2000 -> tier ref 1500
+            mk(1, item_id="CheapEpic_E_I", price=1000),
+            mk(2, item_id="PriceyEpic_E_I", price=2000),
+            # Common tier: CheapCommon 100 vs PriceyCommon 200 -> tier ref 150
+            mk(3, item_id="CheapCommon_C_I", price=100),
+            mk(4, item_id="PriceyCommon_C_I", price=200),
+            # untagged material: excluded by default
+            mk(5, item_id="UntaggedMat", price=10),
+        ],
+        captured_at=1000.0,
+    )
+
+    rows = store.best_value(conn)
+    by = {r["item_id"]: r for r in rows}
+    assert set(by) == {"CheapEpic_E_I", "PriceyEpic_E_I", "CheapCommon_C_I", "PriceyCommon_C_I"}
+    assert by["CheapEpic_E_I"]["value_ratio"] == 1.5  # 1500 / 1000
+    assert by["PriceyEpic_E_I"]["value_ratio"] == 0.75  # 1500 / 2000
+    assert by["CheapEpic_E_I"]["tier_reference_price"] == 1500
+    assert by["CheapEpic_E_I"]["cheaper_than_pct"] == 100.0  # cheapest in its tier
+    assert by["PriceyEpic_E_I"]["cheaper_than_pct"] == 50.0
+    # default order: best value first (1.5 beats 0.75)
+    assert rows[0]["value_ratio"] >= rows[1]["value_ratio"]
+
+    # a current cheap listing improves the value ratio over the historical
+    # median (the tier reference recomputes: epic medians [1000, 1250] -> 1125)
+    store.record_snapshot(conn, [mk(6, item_id="PriceyEpic_E_I", price=500)], captured_at=2000.0)
+    rows = store.best_value(conn)
+    by = {r["item_id"]: r for r in rows}
+    assert by["PriceyEpic_E_I"]["current_median_price"] == 500.0
+    assert by["PriceyEpic_E_I"]["value_ratio"] == 2.25  # 1125 / 500
+    assert by["PriceyEpic_E_I"]["tier_reference_price"] == 1125
+    assert rows[0]["item_id"] == "PriceyEpic_E_I"
+
+    # unrated items appear only when asked
+    assert "UntaggedMat" not in {r["item_id"] for r in store.best_value(conn)}
+    assert "UntaggedMat" in {r["item_id"] for r in store.best_value(conn, include_unrated=True)}
+    conn.close()
+
+
 def test_median():
     assert store.median([]) == 0.0
     assert store.median([7]) == 7.0

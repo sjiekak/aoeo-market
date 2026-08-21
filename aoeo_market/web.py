@@ -17,6 +17,9 @@ Endpoints
                                (``order``, ``dir`` params)
 ``GET /api/best-sellers``      items ranked by observed time-to-sale (fastest
                                sellers first; ``order``, ``dir``, ``min_sales``)
+``GET /api/best-value``        items ranked by value for their rarity (cheapest
+                               relative to their tier; ``order``, ``dir``,
+                               ``include_unrated``)
 ``GET /api/recently-removed``  listings that vanished between the last two
                                snapshots, classified EXPIRED vs REMOVED
 
@@ -90,6 +93,15 @@ class WebApp:
                         order=query.get("order", ["median_time"])[0],
                         direction=query.get("dir", ["asc"])[0],
                         min_sales=self._int_param(query, "min_sales", 1),
+                    )
+                )
+            if path == "/api/best-value":
+                return self._json(
+                    store.best_value(
+                        self._conn(),
+                        order=query.get("order", ["value_ratio"])[0],
+                        direction=query.get("dir", ["desc"])[0],
+                        include_unrated=self._int_param(query, "include_unrated", 0) == 1,
                     )
                 )
             if path == "/api/recently-removed":

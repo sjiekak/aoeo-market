@@ -17,6 +17,7 @@
       <button data-tab="overview" class="active">Overview</button>
       <button data-tab="listings">Listings</button>
       <button data-tab="best-sellers">Best sellers</button>
+      <button data-tab="best-value">Best value</button>
       <button data-tab="not-on-sale">Not on sale</button>
       <button data-tab="removed">Recently removed</button>
       <button data-tab="item" id="nav-item" hidden>Item</button>
@@ -105,6 +106,38 @@
               </tr>
             </thead>
             <tbody id="best-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Best value -->
+    <section id="tab-best-value" hidden>
+      <p class="muted">
+        Value for rarity: each rarity tier's reference price is the median of its items' historical median prices.
+        Value ratio = reference ÷ price (current median while on sale, historical median otherwise) — 2× means half the
+        typical price of its rarity. Items without a rarity tag are excluded. Click a column to reorder.
+      </p>
+      <div class="grid-2">
+        <div class="card chart-card"><h2>Top 10 value (× cheaper than the typical price of their rarity)</h2><canvas id="chart-best-value"></canvas></div>
+        <div class="card">
+          <h2>Best value by rarity</h2>
+          <table>
+            <thead>
+              <tr>
+                <th><a data-order="item">Item</a></th>
+                <th><a data-order="type">Type</a></th>
+                <th class="num"><a data-order="level">Lvl</a></th>
+                <th><a data-order="rarity">Rarity</a></th>
+                <th class="num"><a data-order="value_ratio">Value ratio</a></th>
+                <th class="num"><a data-order="median_price">Typical (hist.)</a></th>
+                <th class="num"><a data-order="current_median_price">Now (median)</a></th>
+                <th class="num"><a data-order="current_min_price">Now (min)</a></th>
+                <th class="num"><a data-order="cheaper_than_pct">Cheaper than</a></th>
+                <th class="num"><a data-order="active_count">On sale</a></th>
+              </tr>
+            </thead>
+            <tbody id="value-body"></tbody>
           </table>
         </div>
       </div>

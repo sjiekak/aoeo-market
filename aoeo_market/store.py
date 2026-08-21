@@ -610,3 +610,118 @@ def best_sellers(
         key = lambda d: (d[col] is None, d[col] or 0)
     out.sort(key=key, reverse=direction == "desc")
     return out
+
+
+# --- best value ------------------------------------------------------------
+
+
+_BEST_VALUE_SORTS = {
+    "value_ratio": "value_ratio",
+    "rarity": "rarity_rank",
+    "item": "item_id",
+    "type": "item_type",
+    "level": "item_level",
+    "median_price": "median_price",
+    "current_median_price": "current_median_price",
+    "current_min_price": "current_min_price",
+    "cheaper_than_pct": "cheaper_than_pct",
+    "active_count": "active_count",
+    "times_listed": "times_listed",
+}
+
+
+def best_value(
+    conn: sqlite3.Connection,
+    *,
+    order: str = "value_ratio",
+    direction: str = "desc",
+    include_unrated: bool = False,
+) -> list[dict]:
+    """Items ranked by how cheap they are for their rarity ("best value").
+
+    For every rarity tier the reference price is the median of the items'
+    historical median prices (each item counts once).  An item's value ratio
+    is ``tier_reference / effective_price``, where the effective price is the
+    item's current median when it is on sale now and its historical median
+    otherwise — a ratio of 2 means it trades at half the typical price of its
+    rarity.  ``cheaper_than_pct`` is the share (0..100) of same-rarity items
+    whose median price is at least this item's, i.e. how cheap the item ranks
+    within its rarity.  Items without a rarity suffix are excluded unless
+    ``include_unrated`` is set.
+    """
+    latest = latest_snapshot(conn)
+    if latest is None:
+        return []
+
+    items: dict[str, dict] = {}
+    for r in conn.execute("SELECT item_id, item_type, item_level, item_price, snapshot_id FROM listings ORDER BY item_id, snapshot_id"):
+        it = items.get(r["item_id"])
+        if it is None:
+            it = items[r["item_id"]] = {
+                "item_type": r["item_type"],
+                "item_level": r["item_level"],
+                "prices": [],
+                "active_prices": [],
+                "times_listed": 0,
+            }
+        else:
+            it["item_type"] = r["item_type"]
+            it["item_level"] = r["item_level"]
+        it["prices"].append(r["item_price"])
+        it["times_listed"] += 1
+        if r["snapshot_id"] == latest["id"]:
+            it["active_prices"].append(r["item_price"])
+
+    for item_id, it in items.items():
+        it["rarity"] = rarity_of(item_id)
+        it["median_price"] = median(it["prices"])
+        it["min_price"] = min(it["prices"])
+        it["max_price"] = max(it["prices"])
+        it["current_median_price"] = median(it["active_prices"]) if it["active_prices"] else None
+        it["current_min_price"] = min(it["active_prices"]) if it["active_prices"] else None
+        it["active_count"] = len(it["active_prices"])
+
+    tiers: dict[int, list[float]] = {}
+    for it in items.values():
+        rank = it["rarity"][0] if it["rarity"] else 0
+        if rank == 0 and not include_unrated:
+            continue
+        tiers.setdefault(rank, []).append(it["median_price"])
+    tier_ref = {rank: median(ps) for rank, ps in tiers.items()}
+
+    out = []
+    for item_id, it in items.items():
+        rank = it["rarity"][0] if it["rarity"] else 0
+        if rank == 0 and not include_unrated:
+            continue
+        ref = tier_ref[rank]
+        effective = it["current_median_price"] if it["current_median_price"] is not None else it["median_price"]
+        tier_medians = tiers[rank]
+        pct = 100.0 * sum(1 for m in tier_medians if m >= it["median_price"]) / len(tier_medians)
+        out.append(
+            {
+                "item_id": item_id,
+                "item_type": it["item_type"],
+                "item_level": it["item_level"],
+                "rarity": it["rarity"][1] if it["rarity"] else None,
+                "rarity_rank": rank,
+                "tier_reference_price": round(ref),
+                "median_price": round(it["median_price"]),
+                "min_price": it["min_price"],
+                "max_price": it["max_price"],
+                "current_median_price": round(it["current_median_price"]) if it["current_median_price"] is not None else None,
+                "current_min_price": it["current_min_price"],
+                "active_count": it["active_count"],
+                "times_listed": it["times_listed"],
+                "value_ratio": round(ref / effective, 2) if effective else None,
+                "cheaper_than_pct": round(pct, 1),
+            }
+        )
+
+    col = _BEST_VALUE_SORTS.get(order, "value_ratio")
+    if col in ("item_id", "item_type"):
+        key = lambda d: d[col]
+    else:
+        key = lambda d: (d[col] is None, d[col] or 0)
+    out.sort(key=key, reverse=direction == "desc")
+    return out

@@ -238,6 +238,58 @@ document.querySelectorAll("#tab-best-sellers th a").forEach((a) =>
   })
 );
 
+/* --- best value ---------------------------------------------------------- */
+
+let valueOrder = "value_ratio";
+let valueDir = "desc";
+const fmtRatio = (r) => (r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×");
+
+async function loadBestValueChart() {
+  const rows = await api("/api/best-value?order=value_ratio&dir=desc");
+  const top = rows.slice(0, 10).reverse();
+  makeChart("#chart-best-value", {
+    type: "bar",
+    data: {
+      labels: top.map((r) => (r.item_id.length > 26 ? r.item_id.slice(0, 26) + "…" : r.item_id)),
+      datasets: [{ label: "value ratio", data: top.map((r) => r.value_ratio), backgroundColor: "#a78bfa" }],
+    },
+    options: {
+      indexAxis: "y",
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (i) => fmtRatio(i.parsed.x) } } },
+      scales: { x: { title: { display: true, text: "× cheaper than typical rarity price" }, beginAtZero: true } },
+    },
+  });
+}
+
+async function loadBestValue() {
+  const rows = await api(`/api/best-value?order=${valueOrder}&dir=${valueDir}`);
+  document.querySelectorAll("#tab-best-value th a").forEach((a) => a.classList.toggle("active", a.dataset.order === valueOrder));
+  $("#value-body").innerHTML = rows
+    .map(
+      (r) => `<tr>
+        <td>${itemLink(r.item_id)}</td>
+        <td>${esc(r.item_type)}</td>
+        <td class="num">${r.item_level}</td>
+        <td>${rarityBadge(r.rarity)}</td>
+        <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
+        <td class="num">${fmtPrice(r.median_price)}</td>
+        <td class="num">${fmtPrice(r.current_median_price)}</td>
+        <td class="num">${fmtPrice(r.current_min_price)}</td>
+        <td class="num">${r.cheaper_than_pct}%</td>
+        <td class="num">${fmtInt(r.active_count)}</td>
+      </tr>`
+    )
+    .join("") || '<tr><td colspan="10" class="muted">no rarity-tagged items observed yet</td></tr>';
+}
+
+document.querySelectorAll("#tab-best-value th a").forEach((a) =>
+  a.addEventListener("click", () => {
+    if (valueOrder === a.dataset.order) valueDir = valueDir === "asc" ? "desc" : "asc";
+    else (valueOrder = a.dataset.order), (valueDir = "desc");
+    loadBestValue();
+  })
+);
+
 /* --- not on sale --------------------------------------------------------- */
 
 let nosOrder = "median_price";
@@ -403,6 +455,8 @@ async function boot() {
   await Promise.all([
     loadBestSellers().catch((e) => console.error(e)),
     loadBestSellersChart().catch((e) => console.error(e)),
+    loadBestValue().catch((e) => console.error(e)),
+    loadBestValueChart().catch((e) => console.error(e)),
     loadNotOnSale().catch((e) => console.error(e)),
     loadRemoved().catch((e) => console.error(e)),
   ]);
