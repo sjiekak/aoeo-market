@@ -5,6 +5,7 @@
 const $ = (sel) => document.querySelector(sel);
 const charts = {};
 const RARITY_COLORS = {
+  Junk: "#64748b",
   Common: "#94a3b8",
   Uncommon: "#4ade80",
   Rare: "#38bdf8",
@@ -41,8 +42,10 @@ const fmtDur = (s) => {
 };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-function itemLink(itemId) {
-  return `<a href="#item/${encodeURIComponent(itemId)}" class="item-link">${esc(itemId)}</a>`;
+function itemLink(itemId, name) {
+  const label = name || itemId;
+  const title = name ? ` title="${esc(itemId)}"` : "";
+  return `<a href="#item/${encodeURIComponent(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
 }
 
 function rarityBadge(name) {
@@ -131,7 +134,7 @@ async function loadOverview() {
   $("#movers").innerHTML = o.top_movers
     .map(
       (m) => `<tr>
-        <td>${itemLink(m.item_id)}</td>
+        <td>${itemLink(m.item_id, m.name)}</td>
         <td class="num">${fmtPrice(m.median_before)}</td>
         <td class="num">${fmtPrice(m.median_now)}</td>
         <td class="num ${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "+" : ""}${m.change_pct}%</td>
@@ -158,7 +161,7 @@ function renderListings() {
   const type = $("#ls-type").value;
   const sort = $("#ls-sort").value;
   const rows = listingsCache
-    .filter((l) => (!type || l.item_type === type) && (!q || l.item_id.toLowerCase().includes(q)))
+    .filter((l) => (!type || l.item_type === type) && (!q || l.item_id.toLowerCase().includes(q) || (l.name && l.name.toLowerCase().includes(q))))
     .sort((a, b) => {
       let r = 0;
       if (sort === "item" || sort === "type" || sort === "seller") r = String(a[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]).localeCompare(String(b[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]));
@@ -170,7 +173,7 @@ function renderListings() {
   $("#listings-body").innerHTML = rows
     .map(
       (l) => `<tr>
-        <td>${itemLink(l.item_id)} ${rarityBadge(l.rarity)}</td>
+        <td>${itemLink(l.item_id, l.name)} ${rarityBadge(l.rarity)}</td>
         <td>${esc(l.item_type)}</td>
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
@@ -198,7 +201,10 @@ async function loadBestSellersChart() {
   makeChart("#chart-best-sellers", {
     type: "bar",
     data: {
-      labels: top.map((r) => r.item_id.length > 26 ? r.item_id.slice(0, 26) + "…" : r.item_id),
+      labels: top.map((r) => {
+        const label = r.name || r.item_id;
+        return label.length > 26 ? label.slice(0, 26) + "…" : label;
+      }),
       datasets: [{ label: "median time-to-sale", data: top.map((r) => r.median_time / 3600), backgroundColor: "#4ade80" }],
     },
     options: {
@@ -215,7 +221,7 @@ async function loadBestSellers() {
   $("#best-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -251,7 +257,10 @@ async function loadBestValueChart() {
   makeChart("#chart-best-value", {
     type: "bar",
     data: {
-      labels: top.map((r) => (r.item_id.length > 26 ? r.item_id.slice(0, 26) + "…" : r.item_id)),
+      labels: top.map((r) => {
+        const label = r.name || r.item_id;
+        return label.length > 26 ? label.slice(0, 26) + "…" : label;
+      }),
       datasets: [{ label: "value ratio", data: top.map((r) => r.value_ratio), backgroundColor: "#a78bfa" }],
     },
     options: {
@@ -268,7 +277,7 @@ async function loadBestValue() {
   $("#value-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id)}</td>
+        <td>${itemLink(r.item_id, r.name)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${rarityBadge(r.rarity)}</td>
@@ -302,7 +311,7 @@ async function loadNotOnSale() {
   $("#nos-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -331,7 +340,7 @@ async function loadRemoved() {
   $("#removed-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td>${esc(r.rarity || "—")}</td>
         <td class="num">${fmtPrice(r.item_price)}</td>
@@ -352,8 +361,15 @@ const HIST_BINS = [
 
 async function loadItem(itemId) {
   const it = await api("/api/item/" + encodeURIComponent(itemId));
-  $("#item-title").textContent = it.item_id;
-  $("#item-meta").innerHTML = `${esc(it.item_type)} · level ${it.item_level} · ${rarityBadge(it.rarity) || "rarity unknown"}`;
+  $("#item-title").textContent = it.name || it.item_id;
+  const nav = (it.name || it.item_id);
+  $("#nav-item").textContent = nav.length > 24 ? nav.slice(0, 24) + "…" : nav;
+  let meta = `${esc(it.item_id)} · ${esc(it.item_type)} · level ${it.item_level} · ${rarityBadge(it.rarity) || "rarity unknown"}`;
+  if (it.civilization) meta += ` · ${esc(it.civilization)}`;
+  if (it.age != null) meta += ` · age ${it.age}`;
+  $("#item-meta").innerHTML = meta;
+  $("#item-desc").textContent = it.description || "";
+  $("#item-desc").hidden = !it.description;
   const cur = it.current;
   $("#item-count").textContent = fmtInt(cur.length);
   const prices = cur.map((c) => c.unit_price).sort((a, b) => a - b);

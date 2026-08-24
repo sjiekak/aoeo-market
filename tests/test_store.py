@@ -64,6 +64,27 @@ def test_active_listings_filter_and_sort(tmp_path):
     conn.close()
 
 
+def test_listing_enriched_from_catalog(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Xerxes_L_IV", item_type="Advisor", price=100)], captured_at=1000.0)
+    row = store.active_listings(conn)[0]
+    assert row["name"] == "Xerxes the Great"
+    assert row["rarity"] == "Legendary"
+    assert row["kind"] == "advisor"
+    assert row["civilization"] == "persian"
+    assert row["age"] == 4
+    conn.close()
+
+
+def test_active_listings_search_matches_display_name(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Xerxes_L_IV", item_type="Advisor", price=100)], captured_at=1000.0)
+    # "great" is only in the display name, "xerxes" is in the raw id.
+    assert [r["item_id"] for r in store.active_listings(conn, q="great")] == ["Xerxes_L_IV"]
+    assert [r["item_id"] for r in store.active_listings(conn, q="xerxes")] == ["Xerxes_L_IV"]
+    conn.close()
+
+
 def test_price_history_series_and_points(tmp_path):
     conn = store.open_store(tmp_path / "m.db")
     store.record_snapshot(conn, [mk(1, price=100), mk(2, price=120), mk(3, price=140)], captured_at=1000.0)

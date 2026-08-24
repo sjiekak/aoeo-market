@@ -59,6 +59,9 @@ aoeo_market/
   protocol.py     frame codec (ctx/ch/len/flags+op/counter), zlib scanner,
                   login bundle and market sweep builders
   market.py       MarketPlaceItemInfo XML (UTF-8 and UTF-16) -> Listing
+  catalog.py      curated item catalog (display name, authoritative rarity,
+                  kind, icon, …) keyed by marketplace id, with the suffix
+                  heuristic as fallback; data/catalog.json is its committed data
   observer.py     snapshot diff -> LISTED / REMOVED(expired|removed) events
   pcap_source.py  read listings from a .pcapng (offline data source)
   auth.py         TCP 4564 "Celeste Network" login (email+password -> session)
@@ -68,6 +71,9 @@ aoeo_market/
   store.py        DuckDB snapshot store + analytics queries
   web/            market website package (stdlib HTTP server, OpenAPI spec,
                   dashboard page)
+scripts/
+  build_catalog.py  regenerate aoeo_market/data/catalog.json from the
+                  ProjectCeleste/celeste-search item database (maintenance tool)
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,
                   gitignored along with the .pcapng captures

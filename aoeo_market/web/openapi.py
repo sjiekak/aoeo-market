@@ -42,7 +42,10 @@ def _listing_schema() -> dict:
         "transaction_id": {"type": "integer", "format": "int64", "description": "Unique listing id; stable across snapshots."},
         "seller_empire_id": {"type": "integer", "format": "int64"},
         "buyer_character_id": {"type": "integer", "format": "int64", "description": "Sentinel -1 while the listing is active."},
-        "item_id": {"type": "string", "description": "Item id; the rarity suffix letters (_C/_U/_R/_E/_L/_LEG) feed the rarity analytics."},
+        "item_id": {
+            "type": "string",
+            "description": "Marketplace item id; resolved against the curated item catalog for the display name and authoritative rarity.",
+        },
         "item_type": {"type": "string", "description": "Advisor, Design, Material, Trait, ..."},
         "item_level": {"type": "integer"},
         "item_count": {"type": "integer", "minimum": 1, "description": "Stack size; item_price is the total for the whole stack."},
@@ -141,7 +144,11 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                     _query_param("sort", "Sort column.", enum=list(store._SORT_COLUMNS), default="price"),
                     _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="asc"),
                 ],
-                "responses": {"200": _json_response("listings, each with rarity and per-unit price", {"type": "array", "items": listing})},
+                "responses": {
+                    "200": _json_response(
+                        "listings, each enriched with display name, kind, icon, authoritative rarity, and per-unit price", {"type": "array", "items": listing}
+                    )
+                },
             }
         },
         "/api/item/{item_id}": {

@@ -29,7 +29,9 @@ from pathlib import Path
 
 import duckdb
 
-from .market import Listing, rarity_of
+from .catalog import fields as catalog_fields
+from .catalog import name_of, rarity_of
+from .market import Listing
 
 _SCHEMA_STATEMENTS = (
     "CREATE SEQUENCE IF NOT EXISTS snapshots_id_seq",
@@ -204,6 +206,8 @@ def _listing_dict(row: dict) -> dict:
     # ItemPrice is the total for the whole stack; the price per unit is what
     # makes listings of different stack sizes comparable.
     d["unit_price"] = round(d["item_price"] / max(d["item_count"], 1), 2)
+    # Curated display name, kind, icon, … from the item catalog.
+    d.update(catalog_fields(d["item_id"]))
     return d
 
 
@@ -230,7 +234,8 @@ def active_listings(
     """Listings of one snapshot (the latest by default), filtered and sorted.
 
     ``sort`` must be a key of :data:`_SORT_COLUMNS`; ``direction`` ``asc`` or
-    ``desc``.  ``q`` is a case-insensitive substring filter on item id.
+    ``desc``.  ``q`` is a case-insensitive substring filter on the item id
+    **and** its catalog display name (so "xerxes" and "the Great" both match).
     """
     if snapshot_id is None:
         latest = latest_snapshot(conn)
@@ -240,14 +245,17 @@ def active_listings(
     if item_type:
         where += " AND item_type = ?"
         params.append(item_type)
-    if q:
-        where += " AND item_id ILIKE ?"
-        params.append(f"%{q}%")
     col = _SORT_COLUMNS.get(sort, "item_price")
     if direction not in ("asc", "desc"):
         direction = "asc"
     rows = _rows(conn, f"SELECT * FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
-    return [_listing_dict(r) for r in rows]
+    out = [_listing_dict(r) for r in rows]
+    if q:
+        # Applied after enrichment so the display name is searchable too; the
+        # SQL sort order is preserved.
+        needle = q.lower()
+        out = [d for d in out if needle in d["item_id"].lower() or (d.get("name") and needle in d["name"].lower())]
+    return out
 
 
 # --- overview --------------------------------------------------------------
@@ -301,7 +309,8 @@ def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15) -> di
         """,
     )
 
-    # Rarity histogram: rarity letters live in the item id (see market.rarity_of).
+    # Rarity histogram: authoritative rarity from the catalog, falling back to
+    # the item-id suffix heuristic (see catalog.rarity_of).
     rarity_bins: dict[str, int] = {}
     for r in _rows(conn, "SELECT item_id FROM listings WHERE snapshot_id = ?", [sid]):
         name = (rarity_of(r["item_id"]) or (0, None))[1] or "unknown"
@@ -350,6 +359,7 @@ def _price_movers(conn: duckdb.DuckDBPyConnection, sid: int, prev_sid: int | Non
         movers.append(
             {
                 "item_id": item_id,
+                "name": name_of(item_id),
                 "median_before": round(med_before),
                 "median_now": round(med_now),
                 "change_pct": round(pct, 1),
@@ -430,12 +440,16 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
 
     meta = series[max(series)]
     rar = rarity_of(item_id)
+    extra = catalog_fields(item_id)
+    name = extra.pop("name", None)
     return {
         "item_id": item_id,
+        "name": name,
         "item_type": meta["item_type"],
         "item_level": meta["item_level"],
         "rarity": rar[1] if rar else None,
         "rarity_rank": rar[0] if rar else 0,
+        **extra,
         "current": current,
         "series": ordered,
         "points": points,
@@ -504,6 +518,7 @@ def items_not_on_sale(
         out.append(
             {
                 "item_id": r["item_id"],
+                "name": name_of(r["item_id"]),
                 "item_type": last["t"] if last else r["item_type"],
                 "item_level": last["lvl"] if last else r["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -558,6 +573,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection) -> list[dict]:
             {
                 "transaction_id": g["transaction_id"],
                 "item_id": g["item_id"],
+                "name": name_of(g["item_id"]),
                 "item_type": g["item_type"],
                 "item_level": g["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -670,6 +686,7 @@ def best_sellers(
         out.append(
             {
                 "item_id": item_id,
+                "name": name_of(item_id),
                 "item_type": it["item_type"],
                 "item_level": it["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -789,6 +806,7 @@ def best_value(
         out.append(
             {
                 "item_id": item_id,
+                "name": name_of(item_id),
                 "item_type": it["item_type"],
                 "item_level": it["item_level"],
                 "rarity": it["rarity"][1] if it["rarity"] else None,
