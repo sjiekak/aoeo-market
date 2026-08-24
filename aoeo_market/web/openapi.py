@@ -1,16 +1,22 @@
 """OpenAPI 3.0 specification for the market website's JSON API.
 
-Built programmatically from the routing metadata in :mod:`aoeo_market.web`
-(the sort/order whitelists live in :mod:`aoeo_market.store`) and the wire
-contract of :class:`aoeo_market.market.Listing`, so the spec cannot drift
-from the implementation.  Served by the web server at ``GET /openapi.json``.
+Built programmatically from the routing metadata in
+:mod:`aoeo_market.web.server` (the sort/order whitelists live in
+:mod:`aoeo_market.store`) and the wire contract of
+:class:`aoeo_market.market.Listing`, so the spec cannot drift from the
+implementation.  Served by the web server at ``GET /openapi.json``.
+
+The **public** document describes the read API and the probes only — how
+market data is ingested is an internal detail and is deliberately omitted.
+:func:`build_spec` can include the ingestion endpoint
+(``include_ingestion=True``) for operator documentation and tests.
 """
 
 from __future__ import annotations
 
 import json
 
-from . import store
+from .. import store
 
 VERSION = "0.1.0"
 
@@ -47,8 +53,56 @@ def _listing_schema() -> dict:
     return {"type": "object", "required": list(props), "properties": props, "additionalProperties": False}
 
 
-def build_spec() -> dict:
-    """Return the complete OpenAPI 3.0 document as a dict."""
+def _ingestion_path(listing: dict, error: dict) -> dict:
+    """The snapshot write endpoint — internal contract, not served publicly.
+
+    The public ``/openapi.json`` deliberately omits it: the website does not
+    advertise how market data is ingested.  It stays in the generated spec
+    for operator documentation and for the sync test.
+    """
+    return {
+        "/api/snapshot": {
+            "post": {
+                "summary": "Append one market snapshot",
+                "description": "The only write endpoint: the fetcher posts here, so the web server is the single owner of the database. Unauthenticated — keep the service cluster-internal.",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["listings"],
+                                "properties": {
+                                    "listings": {"type": "array", "items": listing, "description": "All active listings of the snapshot."},
+                                    "captured_at": {"type": "number", "description": "Unix seconds (UTC) the snapshot was taken; defaults to now."},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "201": _json_response(
+                        "snapshot stored",
+                        {
+                            "type": "object",
+                            "required": ["snapshot_id", "listings"],
+                            "properties": {"snapshot_id": {"type": "integer"}, "listings": {"type": "integer"}},
+                        },
+                    ),
+                    "400": _json_response("malformed payload or invalid listing fields", error),
+                    "500": _json_response("database error", error),
+                },
+            }
+        }
+    }
+
+
+def build_spec(*, include_ingestion: bool = False) -> dict:
+    """Return the complete OpenAPI 3.0 document as a dict.
+
+    The public document (``include_ingestion=False``) describes the read API
+    and the probes only — how snapshots are ingested is an internal detail.
+    """
     listing = {"$ref": "#/components/schemas/Listing"}
     error = {"$ref": "#/components/schemas/Error"}
     loose = {"type": "object", "additionalProperties": True}
@@ -151,46 +205,20 @@ def build_spec() -> dict:
                 "responses": {"200": _json_response("removed listings", {"type": "array", "items": loose})},
             }
         },
-        "/api/snapshot": {
-            "post": {
-                "summary": "Append one market snapshot",
-                "description": "The only write endpoint: the fetch --store CLI posts here, so the web server is the single owner of the database. Unauthenticated — keep the service cluster-internal.",
-                "requestBody": {
-                    "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["listings"],
-                                "properties": {
-                                    "listings": {"type": "array", "items": listing, "description": "All active listings of the snapshot."},
-                                    "captured_at": {"type": "number", "description": "Unix seconds (UTC) the snapshot was taken; defaults to now."},
-                                },
-                            }
-                        }
-                    },
-                },
-                "responses": {
-                    "201": _json_response(
-                        "snapshot stored",
-                        {
-                            "type": "object",
-                            "required": ["snapshot_id", "listings"],
-                            "properties": {"snapshot_id": {"type": "integer"}, "listings": {"type": "integer"}},
-                        },
-                    ),
-                    "400": _json_response("malformed payload or invalid listing fields", error),
-                    "500": _json_response("database error", error),
-                },
-            }
-        },
     }
+
+    if include_ingestion:
+        paths.update(_ingestion_path(listing, error))
 
     return {
         "openapi": "3.0.3",
         "info": {
             "title": "AoEO Market API",
-            "description": "Read-only trading-intelligence API over hourly snapshots of the Project Celeste marketplace, plus the single snapshot write endpoint used by the fetcher.",
+            "description": (
+                "Read-only trading-intelligence API over hourly snapshots of the Project Celeste marketplace."
+                if not include_ingestion
+                else "Read-only trading-intelligence API over hourly snapshots of the Project Celeste marketplace, plus the snapshot ingestion endpoint (internal contract)."
+            ),
             "version": VERSION,
         },
         "servers": [{"url": "/"}],
@@ -204,6 +232,10 @@ def build_spec() -> dict:
     }
 
 
-def spec_json() -> bytes:
-    """The serialized OpenAPI document served at ``GET /openapi.json``."""
-    return json.dumps(build_spec(), indent=2).encode()
+def spec_json(*, include_ingestion: bool = False) -> bytes:
+    """The serialized OpenAPI document served at ``GET /openapi.json``.
+
+    By default the public document: read endpoints and probes only, so the
+    website does not leak how market data is ingested.
+    """
+    return json.dumps(build_spec(include_ingestion=include_ingestion), indent=2).encode()

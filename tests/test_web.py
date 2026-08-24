@@ -72,6 +72,8 @@ def test_readyz_missing_database_until_init(tmp_path):
 def test_openapi_spec_is_served_and_in_sync(tmp_path):
     import json
 
+    from aoeo_market.web import openapi
+
     app = app_for(tmp_path)
     status, ctype, body = app.handle("/openapi.json")
     assert status == 200
@@ -88,14 +90,18 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
         "/api/best-sellers",
         "/api/best-value",
         "/api/recently-removed",
-        "/api/snapshot",
     ):
         assert path in spec["paths"], path
-    assert "post" in spec["paths"]["/api/snapshot"]
-    # the Listing schema must mirror the payload contract exactly
-    assert set(spec["components"]["schemas"]["Listing"]["properties"]) == set(mk(1).to_dict())
+    # the public spec must not advertise how data is ingested
+    assert "/api/snapshot" not in spec["paths"]
     # parameter enums come from the live sort whitelists
     assert spec["paths"]["/api/listings"]["get"]["parameters"][2]["schema"]["enum"] == ["price", "level", "count", "expiry", "item", "type", "seller"]
+
+    # the internal spec keeps the ingestion contract in sync with the code
+    full = openapi.build_spec(include_ingestion=True)
+    assert "post" in full["paths"]["/api/snapshot"]
+    # the Listing schema must mirror the payload contract exactly
+    assert set(full["components"]["schemas"]["Listing"]["properties"]) == set(mk(1).to_dict())
 
 
 def test_overview_endpoint(tmp_path):

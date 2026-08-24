@@ -28,15 +28,16 @@ runs as a **CronJob** that only needs network access to the service.
   DuckDB is a single-file, in-process OLAP engine (no server to deploy): the
   columnar engine keeps the dashboards fast as the history grows, and its SQL
   surface (medians, percentiles, ILIKE) matches the analytics queries.
-- `aoeo_market/web.py` — a stdlib HTTP server (`ThreadingHTTPServer`) that
-  serves the dashboard page and a JSON API, including the
-  `POST /api/snapshot` write endpoint (validated, serialized by a write
-  lock).  The only third-party dependency of the whole site is `duckdb`.
+- `aoeo_market/web/` — the website package: `server.py` (a stdlib
+  `ThreadingHTTPServer` serving the dashboard page and the JSON API,
+  including the `POST /api/snapshot` write endpoint — validated, serialized
+  by a write lock), `openapi.py` (the generated OpenAPI reference served at
+  `/openapi.json`), and `static/` (the single-page dashboard: vanilla JS +
+  Chart.js from the jsDelivr CDN).  The only third-party dependency of the
+  whole site is `duckdb`.
 - `aoeo_market/cli.py` — `fetch --store` accepts either the web URL (POST)
   or a local DuckDB file path (development fallback; the file form is not
   meant for production, where only the web pod owns the volume).
-- `aoeo_market/static/` — the single-page dashboard (vanilla JS + Chart.js
-  loaded from the jsDelivr CDN).
 
 ## Setup
 
@@ -112,7 +113,7 @@ The intended deployment puts both components in one namespace:
 
 | Endpoint | Returns |
 |---|---|
-| `GET /openapi.json` | the machine-readable OpenAPI 3.0 reference of every endpoint below (generated from the routing metadata) |
+| `GET /openapi.json` | the machine-readable OpenAPI 3.0 reference of the public read API — the snapshot ingestion endpoint is deliberately omitted (it stays an internal contract, kept in sync by the tests) |
 | `GET /healthz` | liveness probe — always 200 while the process is up |
 | `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |

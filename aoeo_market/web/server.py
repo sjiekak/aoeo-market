@@ -1,6 +1,6 @@
 """Market intelligence website (stdlib-only web server).
 
-Serves the dashboard single-page app from :mod:`aoeo_market.static` and a
+Serves the dashboard single-page app from :mod:`aoeo_market.web.static` and a
 JSON API over the snapshot database.  This process is the **single owner** of
 the DuckDB file: the ``fetch --store`` CLI posts each snapshot to
 ``POST /api/snapshot`` instead of touching the database itself, so exactly
@@ -14,7 +14,7 @@ pod owning the database volume, and ``fetch --store <url>`` runs as a
 CronJob that only needs network access to the service.
 
 Endpoints are documented in the machine-readable OpenAPI 3.0 reference
-served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.openapi`
+served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.web.openapi`
 from the routing metadata, so it cannot drift from the implementation).
 In short: probes at ``/healthz`` and ``/readyz``; dashboard reads under
 ``/api/*`` (overview, listings, item history, not-on-sale, best-sellers,
@@ -36,8 +36,9 @@ from pathlib import Path
 
 import duckdb
 
-from . import openapi, store
-from .market import Listing
+from .. import store
+from ..market import Listing
+from . import openapi
 
 STATIC_DIR = Path(__file__).with_name("static")
 _STATIC_FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
@@ -194,7 +195,7 @@ class WebApp:
     def _readyz(self) -> tuple[int, str, bytes]:
         """Readiness: the database file exists, opens, and answers queries."""
         if not Path(self.db_path).exists():
-            return 503, _JSON, json.dumps({"status": "not ready", "database": "not initialized (run init-db)"}).encode()
+            return 503, _JSON, json.dumps({"status": "not ready", "database": "not initialized"}).encode()
         try:
             conn = store.open_store(self.db_path)
             try:
