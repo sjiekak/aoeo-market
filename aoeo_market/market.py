@@ -24,6 +24,31 @@ from dataclasses import dataclass
 # is this sentinel. A non-sentinel value would indicate a completed sale record.
 NO_BUYER = -1
 
+# Item ids encode rarity as a suffix letter — ``AdvisorName_E_IV`` (epic
+# advisor, tier IV), ``Design_R`` (rare design), ``Arrows_IceKing_LEG``
+# (legendary).  The letters seen in the wild are C/U/R/E/L plus the LEG
+# legendary marker.  This is a best-effort heuristic, not a server field.
+_RARITY_LETTER_RE = re.compile(r"_([CUREL])(?:_[IVX]+)?$")
+_LEGENDARY_RE = re.compile(r"_(?:LEG|[Ll]egendary)(?:_[IVX]+)?$")
+RARITY_RANK = {"C": 1, "U": 2, "R": 3, "E": 4, "L": 5}
+RARITY_NAME = {1: "Common", 2: "Uncommon", 3: "Rare", 4: "Epic", 5: "Legendary"}
+
+
+def rarity_of(item_id: str) -> tuple[int, str] | None:
+    """Best-effort ``(rank, name)`` rarity read from an item id's suffix.
+
+    Returns ``None`` when no known rarity suffix is present (materials and
+    most consumables carry none).  Higher rank means rarer.
+    """
+    if _LEGENDARY_RE.search(item_id):
+        return (5, RARITY_NAME[5])
+    m = _RARITY_LETTER_RE.search(item_id)
+    if m:
+        rank = RARITY_RANK[m.group(1)]
+        return (rank, RARITY_NAME[rank])
+    return None
+
+
 _RECORD_RE = re.compile(
     rb'<MarketPlaceItemInfo\s+SellerEmpireId="(?P<seller>-?\d+)"\s*>(?P<body>.*?)</MarketPlaceItemInfo>',
     re.DOTALL,
@@ -56,6 +81,21 @@ class Listing:
     @property
     def is_active(self) -> bool:
         return self.buyer_character_id == NO_BUYER
+
+    def to_dict(self) -> dict[str, int | str]:
+        """The JSON payload shape the snapshot API accepts."""
+        return {
+            "transaction_id": self.transaction_id,
+            "seller_empire_id": self.seller_empire_id,
+            "buyer_character_id": self.buyer_character_id,
+            "item_id": self.item_id,
+            "item_type": self.item_type,
+            "item_level": self.item_level,
+            "item_count": self.item_count,
+            "item_price": self.item_price,
+            "item_seed": self.item_seed,
+            "seconds_till_expiry": self.seconds_till_expiry,
+        }
 
 
 def parse_listings(data: bytes) -> list[Listing]:

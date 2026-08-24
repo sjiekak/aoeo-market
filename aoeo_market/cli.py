@@ -4,9 +4,15 @@ uv run python -m aoeo_market.cli dump   <capture>   # list all listings
 uv run python -m aoeo_market.cli replay <capA> <capB># diff two snapshots -> events
 uv run python -m aoeo_market.cli fetch               # read the live market
 uv run python -m aoeo_market.cli fetch  --watch      # stream events
+uv run python -m aoeo_market.cli fetch  --store --quiet  # snapshot -> market.db
+uv run python -m aoeo_market.cli init-db             # create the database (schema only)
 
 The live commands detect your local IPv4 address as the default; pass
-``--local-ip <ip>`` to override it.
+``--local-ip <ip>`` to override it.  ``fetch --store`` persists every fetched
+snapshot: give it the web app's URL (``--store http://host:8000``) to POST
+the snapshot to its API — the web server is the single owner of the database
+— or a local file path (``--store market.db``) to write a DuckDB file
+directly.  Run it from cron every hour to build the history.
 """
 
 from __future__ import annotations
@@ -50,6 +56,21 @@ def _print_event(ev: Event) -> None:
 
 def _dump(args: argparse.Namespace) -> int:
     _print_listings(listings_from_pcap(args.capture))
+    return 0
+
+
+def _init_db(args: argparse.Namespace) -> int:
+    """Create the snapshot database (schema only) — idempotent.
+
+    Meant for the Kubernetes init container, so the web pod finds a ready
+    ``market.db`` on its volume before it starts; safe to re-run at any time.
+    """
+    from . import store
+
+    conn = store.open_store(args.db)
+    count = store.snapshot_count(conn)
+    conn.close()
+    print(f"initialized {args.db} ({count} snapshot{'s' if count != 1 else ''} present)")
     return 0
 
 
@@ -105,15 +126,64 @@ def _probe(args: argparse.Namespace) -> int:
     )
 
 
-def _watch(mc: MarketClient, interval: float) -> int:
+def _post_snapshot(url: str, listings: list[Listing]) -> str:
+    """POST the snapshot JSON to the web API; return the summary message."""
+    import json
+    import urllib.request
+
+    payload = json.dumps({"listings": [l.to_dict() for l in listings]}).encode()
+    req = urllib.request.Request(
+        url.rstrip("/") + "/api/snapshot",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = json.loads(resp.read() or b"{}")
+    return f"{body.get('listings', len(listings))} listings -> {url} (snapshot id {body.get('snapshot_id')})"
+
+
+def _record_snapshot(target: str, listings: list[Listing]) -> bool:
+    """Persist one snapshot to a web URL or a local DuckDB file.
+
+    Returns ``False`` (after reporting to stderr) when the target rejects it.
+    """
+    try:
+        if target.startswith(("http://", "https://")):
+            msg = _post_snapshot(target, listings)
+        else:
+            # Local file fallback (development only): the web server is the
+            # intended single owner of the database in production.
+            from . import store
+
+            conn = store.open_store(target)
+            try:
+                store.record_snapshot(conn, listings)
+            finally:
+                conn.close()
+            msg = f"{len(listings)} listings -> {target}"
+    except (OSError, ValueError) as exc:
+        print(f"error storing snapshot: {exc}", file=sys.stderr)
+        return False
+    print(f"stored {msg}", file=sys.stderr)
+    return True
+
+
+def _watch(mc: MarketClient, interval: float, store_target: str | None = None, quiet: bool = False) -> int:
     """Prime the observer with the current snapshot, then stream events."""
     listings = mc.fetch_listings()
-    _print_listings(listings)
+    if store_target:
+        _record_snapshot(store_target, listings)
+    if not quiet:
+        _print_listings(listings)
     mc.observer.observe(listings)  # first snapshot: suppress the LISTED flood
     while True:
         mc.ping()
         time.sleep(interval)
-        for ev in mc.poll_once():
+        listings = mc.fetch_listings()
+        if store_target:
+            _record_snapshot(store_target, listings)
+        for ev in mc.observer.observe(listings):
             _print_event(ev)
 
 
@@ -149,8 +219,12 @@ def _fetch(args: argparse.Namespace) -> int:
         )
         mc.login(session)
         if args.watch:
-            return _watch(mc, args.interval)
-        _print_listings(mc.fetch_listings())
+            return _watch(mc, args.interval, args.store, args.quiet)
+        listings = mc.fetch_listings()
+        if args.store and not _record_snapshot(args.store, listings):
+            return 1  # the snapshot target rejected the write: fail the run
+        if not args.quiet:
+            _print_listings(listings)
         return 0
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
@@ -166,6 +240,10 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("dump", help="list all active listings in a capture")
     d.add_argument("capture")
     d.set_defaults(func=_dump)
+
+    i = sub.add_parser("init-db", help="create the DuckDB snapshot database (schema only, idempotent)")
+    i.add_argument("--db", default="market.db", help="path to the database file (default market.db)")
+    i.set_defaults(func=_init_db)
 
     r = sub.add_parser("replay", help="diff two captures into market events")
     r.add_argument("first")
@@ -205,6 +283,18 @@ def main(argv: list[str] | None = None) -> int:
         "--watch",
         action="store_true",
         help="keep polling and stream LISTED/REMOVED events instead of exiting",
+    )
+    f.add_argument(
+        "--store",
+        nargs="?",
+        const="market.db",
+        metavar="URL_OR_PATH",
+        help="persist every fetched snapshot: POST to a web URL (http://host:8000) or write a local DuckDB file (default market.db)",
+    )
+    f.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the listings table (useful for cron runs)",
     )
     f.set_defaults(func=_fetch)
 

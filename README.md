@@ -4,7 +4,11 @@ A headless client that watches the Age of Empires Online (Project Celeste)
 marketplace and emits events when items are **listed** and **removed**, with a
 best-effort **expired vs. removed** classification: a listing that vanishes
 with less than a day left on its countdown is EXPIRED, anything earlier is
-REMOVED (sold or withdrawn — indistinguishable from the outside).
+REMOVED (sold or withdrawn — indistinguishable from the outside). Hourly
+snapshots can be persisted to DuckDB and browsed on the **market website**:
+price distributions and history, best-selling items ranked by time-to-sale,
+items currently not on sale, recent sold/expired removals, and other trading
+intelligence.
 
 ## Quick start (offline, works today)
 
@@ -15,6 +19,8 @@ uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapsho
 uv run python -m aoeo_market.cli probe   --game                    # live login probe
 uv run python -m aoeo_market.cli fetch                             # read the live market
 uv run python -m aoeo_market.cli fetch  --watch                    # stream LISTED/REMOVED events
+uv run python -m aoeo_market.cli fetch  --store http://127.0.0.1:8000 --quiet  # snapshot via the web API
+uv run python -m aoeo_market.web --db market.db                    # serve the dashboard
 ```
 
 > The live commands detect your local IPv4 address and use it as the default;
@@ -34,6 +40,8 @@ uv run python -m aoeo_market.cli fetch  --watch                    # stream LIST
   remaining, REMOVED otherwise (sold vs. withdrawn is indistinguishable).
 - [Live client](docs/live-client.md) — status of the live login/polling path
   (validated against the real server on 2026-08-17).
+- [Market website](docs/market-website.md) — the DuckDB snapshot store, the
+  hourly cron fetch, the dashboard views, and the JSON API.
 
 ## Layout
 
@@ -55,8 +63,11 @@ aoeo_market/
   pcap_source.py  read listings from a .pcapng (offline data source)
   auth.py         TCP 4564 "Celeste Network" login (email+password -> session)
   client.py       live TCP 1510 client
-  cli.py          `dump`, `replay`, `probe`, and `fetch` commands
+  cli.py          `dump`, `replay`, `probe`, `fetch`, and `init-db` commands
   live_probe.py   live connection probe
+  store.py        DuckDB snapshot store + analytics queries
+  web/            market website package (stdlib HTTP server, OpenAPI spec,
+                  dashboard page)
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,
                   gitignored along with the .pcapng captures

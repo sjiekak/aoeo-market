@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AoEO Market — trading intelligence</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>AoEO Market</h1>
+      <span id="snapshot-info" class="muted"></span>
+    </div>
+    <nav>
+      <button data-tab="overview" class="active">Overview</button>
+      <button data-tab="listings">Listings</button>
+      <button data-tab="best-sellers">Best sellers</button>
+      <button data-tab="best-value">Best value</button>
+      <button data-tab="not-on-sale">Not on sale</button>
+      <button data-tab="removed">Recently removed</button>
+      <button data-tab="item" id="nav-item" hidden>Item</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Overview -->
+    <section id="tab-overview">
+      <div id="empty-banner" class="banner" hidden>
+        No market data has been recorded yet.
+      </div>
+      <div class="kpis">
+        <div class="card kpi"><div class="kpi-value" id="kpi-listings">–</div><div class="kpi-label">active listings</div></div>
+        <div class="card kpi"><div class="kpi-value" id="kpi-items">–</div><div class="kpi-label">distinct items</div></div>
+        <div class="card kpi"><div class="kpi-value" id="kpi-snapshots">–</div><div class="kpi-label">snapshots</div></div>
+        <div class="card kpi"><div class="kpi-value" id="kpi-last">–</div><div class="kpi-label">last snapshot</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card chart-card"><h2>Market supply over time</h2><canvas id="chart-supply"></canvas></div>
+        <div class="card chart-card"><h2>Price distribution (current, per unit)</h2><canvas id="chart-prices"></canvas></div>
+        <div class="card chart-card"><h2>Listings by type</h2><canvas id="chart-types"></canvas></div>
+        <div class="card chart-card"><h2>Listings by rarity</h2><canvas id="chart-rarity"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Biggest median-price movers <span class="muted">(last two snapshots)</span></h2>
+        <table>
+          <thead><tr><th>Item</th><th class="num">median before</th><th class="num">median now</th><th class="num">change</th></tr></thead>
+          <tbody id="movers"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Listings -->
+    <section id="tab-listings" hidden>
+      <div class="controls">
+        <input id="ls-q" type="search" placeholder="search item id…">
+        <select id="ls-type"><option value="">all types</option></select>
+        <select id="ls-sort">
+          <option value="price">price</option>
+          <option value="level">level</option>
+          <option value="count">count</option>
+          <option value="expiry">time left</option>
+          <option value="item">item</option>
+          <option value="type">type</option>
+          <option value="seller">seller</option>
+        </select>
+        <button id="ls-dir" title="toggle sort direction">↓</button>
+        <span id="ls-count" class="muted"></span>
+      </div>
+      <div class="card">
+        <table>
+          <thead><tr><th>Item</th><th>Type</th><th class="num">Lvl</th><th class="num">Cnt</th><th class="num">Price/unit</th><th class="num">Expires</th><th>Seller</th></tr></thead>
+          <tbody id="listings-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Best sellers -->
+    <section id="tab-best-sellers" hidden>
+      <p class="muted">
+        Time-to-sale: from a listing's first appearance in the data to its first absence,
+        counting only listings that vanished with ≥1 day left on their countdown (sold or withdrawn — indistinguishable).
+        Fastest first; click a column to reorder.
+      </p>
+      <div class="grid-2">
+        <div class="card chart-card"><h2>Fastest sellers (median time-to-sale)</h2><canvas id="chart-best-sellers"></canvas></div>
+        <div class="card">
+          <h2>All items with observed sales <span class="muted">(median of n timed sales)</span></h2>
+          <table>
+            <thead>
+              <tr>
+                <th><a data-order="item">Item</a></th>
+                <th><a data-order="type">Type</a></th>
+                <th class="num"><a data-order="level">Lvl</a></th>
+                <th><a data-order="rarity">Rarity</a></th>
+                <th class="num"><a data-order="median_time">Median time-to-sale</a></th>
+                <th class="num"><a data-order="min_time">Min</a></th>
+                <th class="num"><a data-order="max_time">Max</a></th>
+                <th class="num"><a data-order="sales">Sales</a></th>
+                <th class="num"><a data-order="expired">Expired</a></th>
+                <th class="num"><a data-order="active_count">On sale now</a></th>
+                <th class="num"><a data-order="current_median_unit_price">Current median/unit</a></th>
+              </tr>
+            </thead>
+            <tbody id="best-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Best value -->
+    <section id="tab-best-value" hidden>
+      <p class="muted">
+        Value for rarity: each rarity tier's reference price is the median of its items' historical median prices.
+        Value ratio = reference ÷ price (current median while on sale, historical median otherwise) — 2× means half the
+        typical price of its rarity. Items without a rarity tag are excluded. Click a column to reorder.
+      </p>
+      <div class="grid-2">
+        <div class="card chart-card"><h2>Top 10 value (× cheaper than the typical price of their rarity)</h2><canvas id="chart-best-value"></canvas></div>
+        <div class="card">
+          <h2>Best value by rarity</h2>
+          <table>
+            <thead>
+              <tr>
+                <th><a data-order="item">Item</a></th>
+                <th><a data-order="type">Type</a></th>
+                <th class="num"><a data-order="level">Lvl</a></th>
+                <th><a data-order="rarity">Rarity</a></th>
+                <th class="num"><a data-order="value_ratio">Value ratio</a></th>
+                <th class="num"><a data-order="median_unit_price">Typical/unit (hist.)</a></th>
+                <th class="num"><a data-order="current_median_unit_price">Now/unit (median)</a></th>
+                <th class="num"><a data-order="current_min_unit_price">Now/unit (min)</a></th>
+                <th class="num"><a data-order="cheaper_than_pct">Cheaper than</a></th>
+                <th class="num"><a data-order="active_count">On sale</a></th>
+              </tr>
+            </thead>
+            <tbody id="value-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Not on sale -->
+    <section id="tab-not-on-sale" hidden>
+      <div class="card">
+        <h2>Items with no active listing right now <span class="muted">(seen in past snapshots — click a column to order)</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th><a data-order="item">Item</a></th>
+              <th><a data-order="type">Type</a></th>
+              <th class="num"><a data-order="level">Lvl</a></th>
+              <th><a data-order="rarity">Rarity</a></th>
+              <th class="num"><a data-order="median_unit_price">Median price/unit</a></th>
+              <th class="num"><a data-order="min_unit_price">Min/unit</a></th>
+              <th class="num"><a data-order="max_unit_price">Max/unit</a></th>
+              <th class="num"><a data-order="times_listed">Times listed</a></th>
+              <th class="num"><a data-order="last_seen">Last seen</a></th>
+            </tr>
+          </thead>
+          <tbody id="nos-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Recently removed -->
+    <section id="tab-removed" hidden>
+      <div class="card">
+        <h2>Listings that vanished between the last two snapshots</h2>
+        <p class="muted">EXPIRED = timed out with &lt;1 day left · REMOVED = sold or withdrawn (indistinguishable)</p>
+        <table>
+          <thead><tr><th>Item</th><th>Type</th><th>Rarity</th><th class="num">Price</th><th>Reason</th><th class="num">Vanished</th><th>Seller</th></tr></thead>
+          <tbody id="removed-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Item detail -->
+    <section id="tab-item" hidden>
+      <button id="item-back" class="link">← back to listings</button>
+      <div class="item-head">
+        <h2 id="item-title">–</h2>
+        <span id="item-meta" class="muted"></span>
+      </div>
+      <div class="kpis">
+        <div class="card kpi"><div class="kpi-value" id="item-count">–</div><div class="kpi-label">current listings</div></div>
+        <div class="card kpi"><div class="kpi-value" id="item-min">–</div><div class="kpi-label">current min</div></div>
+        <div class="card kpi"><div class="kpi-value" id="item-med">–</div><div class="kpi-label">current median</div></div>
+        <div class="card kpi"><div class="kpi-value" id="item-max">–</div><div class="kpi-label">current max</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card chart-card wide"><h2>Price history <span class="muted">(per unit — line = median per snapshot, dots = individual listings)</span></h2><canvas id="chart-item-history"></canvas></div>
+        <div class="card chart-card"><h2>Historical price distribution <span class="muted">(per unit)</span></h2><canvas id="chart-item-histogram"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Current listings</h2>
+        <table>
+          <thead><tr><th class="num">Price/unit</th><th class="num">Total</th><th class="num">Count</th><th class="num">Expires</th><th>Seller</th></tr></thead>
+          <tbody id="item-current"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="muted">
+    Read-only observer for the Project Celeste marketplace · data is best-effort, use at your own risk
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
