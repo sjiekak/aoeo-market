@@ -128,13 +128,13 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "/api/overview": {
             "get": {
                 "summary": "Aggregate stats for the overview tab",
-                "description": "Latest snapshot, snapshot count, active listings, distinct items, supply history, type and rarity breakdowns, the current per-unit price histogram, and the biggest median-price movers between the last two snapshots.",
+                "description": "Current market stats: active listings, distinct items, supply history, type and rarity breakdowns, the current per-unit price histogram, and the biggest median-price movers between the two most recent data points.",
                 "responses": {"200": _json_response("overview aggregates", loose)},
             }
         },
         "/api/listings": {
             "get": {
-                "summary": "Active listings of the latest snapshot",
+                "summary": "Current active listings",
                 "parameters": [
                     _query_param("type", "Filter by item type."),
                     _query_param("q", "Case-insensitive substring filter on item id."),
@@ -147,7 +147,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "/api/item/{item_id}": {
             "get": {
                 "summary": "Current listings plus the full price history of one item",
-                "description": "Per-unit price series (median per snapshot plus downsampled raw points) and the item's current listings.",
+                "description": "Per-unit price series (median per observation plus downsampled raw points) and the item's current listings.",
                 "parameters": [
                     {
                         "name": "item_id",
@@ -177,7 +177,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "/api/best-sellers": {
             "get": {
                 "summary": "Items ranked by observed time-to-sale (fastest first)",
-                "description": "Listing lifetime measured between hourly snapshots; only fully observed listings that vanished with >= 1 day left on their countdown count as sales.",
+                "description": "Listing lifetime measured between consecutive observations; only fully observed listings that vanished with >= 1 day left on their countdown count as sales.",
                 "parameters": [
                     _query_param("order", "Sort column.", enum=list(store._BEST_SELLER_SORTS), default="median_time"),
                     _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="asc"),
@@ -200,7 +200,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         },
         "/api/recently-removed": {
             "get": {
-                "summary": "Listings that vanished between the last two snapshots",
+                "summary": "Listings that vanished between the two most recent data points",
                 "description": "Classified EXPIRED (< 1 day left on the countdown) or REMOVED (sold or withdrawn — indistinguishable).",
                 "responses": {"200": _json_response("removed listings", {"type": "array", "items": loose})},
             }
@@ -215,9 +215,9 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "info": {
             "title": "AoEO Market API",
             "description": (
-                "Read-only trading-intelligence API over hourly snapshots of the Project Celeste marketplace."
+                "Read-only trading-intelligence API over the recorded history of the Project Celeste marketplace."
                 if not include_ingestion
-                else "Read-only trading-intelligence API over hourly snapshots of the Project Celeste marketplace, plus the snapshot ingestion endpoint (internal contract)."
+                else "Read-only trading-intelligence API over the recorded history of the Project Celeste marketplace, plus the snapshot ingestion endpoint (internal contract)."
             ),
             "version": VERSION,
         },

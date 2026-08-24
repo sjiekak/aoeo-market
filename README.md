@@ -66,8 +66,8 @@ aoeo_market/
   cli.py          `dump`, `replay`, `probe`, `fetch`, and `init-db` commands
   live_probe.py   live connection probe
   store.py        DuckDB snapshot store + analytics queries
-  web.py          market website (stdlib HTTP server + JSON API)
-  static/         dashboard single-page app (Chart.js)
+  web/            market website package (stdlib HTTP server, OpenAPI spec,
+                  dashboard page)
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,
                   gitignored along with the .pcapng captures

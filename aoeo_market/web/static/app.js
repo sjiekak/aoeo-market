@@ -137,7 +137,7 @@ async function loadOverview() {
         <td class="num ${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "+" : ""}${m.change_pct}%</td>
       </tr>`
     )
-    .join("") || '<tr><td colspan="4" class="muted">need at least two snapshots</td></tr>';
+    .join("") || '<tr><td colspan="4" class="muted">need at least two data points</td></tr>';
 }
 
 /* --- listings ------------------------------------------------------------ */
@@ -228,7 +228,7 @@ async function loadBestSellers() {
         <td class="num">${fmtPrice(r.current_median_unit_price)}</td>
       </tr>`
     )
-    .join("") || '<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as hourly snapshots accumulate</td></tr>';
+    .join("") || '<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as more data is collected</td></tr>';
 }
 
 document.querySelectorAll("#tab-best-sellers th a").forEach((a) =>
