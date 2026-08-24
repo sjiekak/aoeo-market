@@ -166,8 +166,20 @@
 
     <!-- Recently removed -->
     <section id="tab-removed" hidden>
+      <div class="controls">
+        <label for="removed-window">Frame</label>
+        <select id="removed-window">
+          <option value="">between last two snapshots</option>
+          <option value="3600">last hour</option>
+          <option value="14400">last 4 hours</option>
+          <option value="28800">last 8 hours</option>
+          <option value="86400">last day</option>
+          <option value="432000">last 5 days</option>
+        </select>
+        <span id="removed-count" class="muted"></span>
+      </div>
       <div class="card">
-        <h2>Listings that vanished between the last two snapshots</h2>
+        <h2>Listings that vanished</h2>
         <p class="muted">EXPIRED = timed out with &lt;1 day left · REMOVED = sold or withdrawn (indistinguishable)</p>
         <table>
           <thead><tr><th>Item</th><th>Type</th><th>Rarity</th><th class="num">Price</th><th>Reason</th><th class="num">Vanished</th><th>Seller</th></tr></thead>

@@ -31,6 +31,7 @@ import json
 import sys
 import threading
 import urllib.parse
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -130,7 +131,7 @@ class WebApp:
                     )
                 )
             if path == "/api/recently-removed":
-                return self._json(store.recently_removed(self._conn()))
+                return self._json(store.recently_removed(self._conn(), window=self._window_param(query)))
             if path.startswith("/api/item/"):
                 item_id = urllib.parse.unquote(path[len("/api/item/") :])
                 history = store.price_history(self._conn(), item_id)
@@ -222,6 +223,20 @@ class WebApp:
             return int(raw)
         except ValueError:
             raise _BadParam(f"{name} must be an integer") from None
+
+    @staticmethod
+    def _window_param(query: dict[str, list[str]]) -> timedelta | None:
+        """Parse the ``window`` query param (seconds) into a ``timedelta``."""
+        raw = query.get("window", [None])[0]
+        if raw is None:
+            return None
+        try:
+            seconds = float(raw)
+        except ValueError:
+            raise _BadParam("window must be a number of seconds") from None
+        if seconds <= 0:
+            raise _BadParam("window must be a positive number of seconds")
+        return timedelta(seconds=seconds)
 
     def _json(self, payload) -> tuple[int, str, bytes]:
         return 200, _JSON, json.dumps(payload).encode()

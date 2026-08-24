@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Iterable, Sequence
+from datetime import timedelta
 from pathlib import Path
 
 import duckdb
@@ -540,8 +541,15 @@ def items_not_on_sale(
     return out
 
 
-def recently_removed(conn: duckdb.DuckDBPyConnection) -> list[dict]:
-    """Listings that vanished between the two most recent snapshots.
+def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | None = None) -> list[dict]:
+    """Listings that vanished, relative to the latest snapshot.
+
+    With ``window=None`` (the default) this is the delta between the two most
+    recent snapshots — the view's original behaviour.  With a ``window``
+    :class:`datetime.timedelta` it instead returns every listing that vanished
+    within that span of the latest snapshot's ``captured_at``: a transaction
+    vanishes at the first snapshot where it is absent after having been
+    present, and that snapshot's time is the returned ``vanished_at``.
 
     Classified like the live observer: EXPIRED when the listing timed out with
     less than a day left on its countdown, REMOVED (sold or withdrawn —
@@ -550,20 +558,50 @@ def recently_removed(conn: duckdb.DuckDBPyConnection) -> list[dict]:
     latest = latest_snapshot(conn)
     if latest is None:
         return []
-    prev = previous_snapshot(conn, latest["id"])
-    if prev is None:
-        return []
-    gone = _rows(
-        conn,
-        """
-        SELECT l.*, s.captured_at AS last_seen
-        FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
-        WHERE l.snapshot_id = ? AND l.transaction_id NOT IN (
-            SELECT transaction_id FROM listings WHERE snapshot_id = ?
+    if window is None:
+        prev = previous_snapshot(conn, latest["id"])
+        if prev is None:
+            return []
+        gone = _rows(
+            conn,
+            """
+            SELECT l.*, s.captured_at AS last_seen
+            FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
+            WHERE l.snapshot_id = ? AND l.transaction_id NOT IN (
+                SELECT transaction_id FROM listings WHERE snapshot_id = ?
+            )
+            """,
+            [prev["id"], latest["id"]],
         )
-        """,
-        [prev["id"], latest["id"]],
-    )
+        for g in gone:
+            g["vanished_at"] = latest["captured_at"]
+    else:
+        window_start = latest["captured_at"] - window.total_seconds()
+        gone = _rows(
+            conn,
+            """
+            WITH vanished AS (
+                SELECT transaction_id, MAX(snapshot_id) AS last_sid
+                FROM listings
+                WHERE transaction_id NOT IN (
+                    SELECT transaction_id FROM listings WHERE snapshot_id = ?
+                )
+                GROUP BY transaction_id
+            ),
+            vtimes AS (
+                SELECT transaction_id, last_sid,
+                       (SELECT MIN(id) FROM snapshots WHERE id > last_sid) AS vanish_sid
+                FROM vanished
+            )
+            SELECT l.*, s.captured_at AS last_seen, vs.captured_at AS vanished_at
+            FROM vtimes v
+            JOIN listings l ON l.snapshot_id = v.last_sid AND l.transaction_id = v.transaction_id
+            JOIN snapshots s ON s.id = v.last_sid
+            JOIN snapshots vs ON vs.id = v.vanish_sid
+            WHERE vs.captured_at >= ?
+            """,
+            [latest["id"], window_start],
+        )
     out = []
     for g in gone:
         remaining = g["seconds_till_expiry"]
@@ -581,7 +619,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection) -> list[dict]:
                 "item_price": g["item_price"],
                 "seller_empire_id": g["seller_empire_id"],
                 "reason": reason,
-                "vanished_at": latest["captured_at"],
+                "vanished_at": g["vanished_at"],
             }
         )
     out.sort(key=lambda d: d["item_price"], reverse=True)

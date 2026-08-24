@@ -336,7 +336,9 @@ document.querySelectorAll("#tab-not-on-sale th a").forEach((a) =>
 /* --- recently removed ---------------------------------------------------- */
 
 async function loadRemoved() {
-  const rows = await api("/api/recently-removed");
+  const windowSecs = $("#removed-window").value;
+  const rows = await api("/api/recently-removed" + (windowSecs ? `?window=${encodeURIComponent(windowSecs)}` : ""));
+  $("#removed-count").textContent = `${rows.length} listing${rows.length === 1 ? "" : "s"}`;
   $("#removed-body").innerHTML = rows
     .map(
       (r) => `<tr>
@@ -349,8 +351,10 @@ async function loadRemoved() {
         <td>${esc(String(r.seller_empire_id))}</td>
       </tr>`
     )
-    .join("") || '<tr><td colspan="7" class="muted">nothing vanished between the last two snapshots</td></tr>';
+    .join("") || '<tr><td colspan="7" class="muted">nothing vanished in this frame</td></tr>';
 }
+
+$("#removed-window").addEventListener("change", loadRemoved);
 
 /* --- item detail --------------------------------------------------------- */
 
