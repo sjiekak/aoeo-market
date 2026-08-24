@@ -21,8 +21,8 @@ from .. import store
 VERSION = "0.1.0"
 
 
-def _query_param(name: str, description: str, *, enum: list[str] | None = None, default: str | None = None) -> dict:
-    param: dict = {"name": name, "in": "query", "required": False, "description": description, "schema": {"type": "string"}}
+def _query_param(name: str, description: str, *, enum: list[str] | None = None, default: str | None = None, schema_type: str = "string") -> dict:
+    param: dict = {"name": name, "in": "query", "required": False, "description": description, "schema": {"type": schema_type}}
     if enum:
         param["schema"]["enum"] = enum
     if default is not None:
@@ -207,8 +207,15 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         },
         "/api/recently-removed": {
             "get": {
-                "summary": "Listings that vanished between the two most recent data points",
-                "description": "Classified EXPIRED (< 1 day left on the countdown) or REMOVED (sold or withdrawn — indistinguishable).",
+                "summary": "Listings that vanished between the two most recent data points, or within a chosen time window",
+                "description": "Classified EXPIRED (< 1 day left on the countdown) or REMOVED (sold or withdrawn — indistinguishable). By default this is the delta between the two most recent snapshots; pass `window` (seconds) to see every listing that vanished within that time window.",
+                "parameters": [
+                    _query_param(
+                        "window",
+                        "Time window in seconds back from the latest snapshot (default: the delta between the two most recent snapshots).",
+                        schema_type="number",
+                    ),
+                ],
                 "responses": {"200": _json_response("removed listings", {"type": "array", "items": loose})},
             }
         },

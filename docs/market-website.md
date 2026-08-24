@@ -106,7 +106,7 @@ The intended deployment puts both components in one namespace:
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
 | **Best value** | Items ranked by **value for their rarity**: how cheap an item trades relative to the typical price of its rarity tier (a 2× ratio means half the typical price). Orderable by ratio, price, "cheaper than %" percentile and more; a bar chart shows the ten best. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
-| **Recently removed** | Listings that vanished between the last two snapshots, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). |
+| **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
 | **Item detail** | Full price history of one item — display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
 
 ## JSON API
@@ -122,7 +122,7 @@ The intended deployment puts both components in one namespace:
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
-| `GET /api/recently-removed` | listings that vanished between the last two snapshots |
+| `GET /api/recently-removed?window=` | listings that vanished between the last two snapshots (default), or within the last `window` seconds |
 | `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}` |
 
 The API is the stable surface of the website; the frontend is a consumer of it.

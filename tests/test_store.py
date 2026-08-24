@@ -1,5 +1,7 @@
 """Unit tests for the snapshot store — no network or captures required."""
 
+from datetime import timedelta
+
 from aoeo_market import store
 from aoeo_market.market import Listing
 
@@ -158,6 +160,43 @@ def test_recently_removed_classification(tmp_path):
     assert by_tx[3]["reason"] == "REMOVED"
     assert by_tx[3]["item_id"] == "StillThere_U_I"
     assert 4 not in by_tx
+    conn.close()
+
+
+def test_recently_removed_time_windows(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    # Four snapshots, one hour apart; one listing vanishes each hour.
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Active_U_I", expiry=200_000),
+            mk(2, item_id="Vanished3hAgo_U_I", expiry=200_000),
+            mk(3, item_id="Vanished2hAgo_U_I", expiry=200_000),
+            mk(4, item_id="Vanished1hAgo_U_I", expiry=200_000),
+        ],
+        captured_at=0.0,
+    )
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="Active_U_I", expiry=200_000), mk(2, item_id="Vanished3hAgo_U_I", expiry=200_000), mk(3, item_id="Vanished2hAgo_U_I", expiry=200_000)],
+        captured_at=3600.0,
+    )
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="Active_U_I", expiry=200_000), mk(2, item_id="Vanished3hAgo_U_I", expiry=200_000)],
+        captured_at=7200.0,
+    )
+    store.record_snapshot(conn, [mk(1, item_id="Active_U_I", expiry=200_000)], captured_at=10800.0)
+
+    # Default: the delta between the two most recent snapshots only.
+    assert {r["transaction_id"] for r in store.recently_removed(conn)} == {2}
+    # Time windows: each wider timedelta widens the frame back in time.
+    assert {r["transaction_id"] for r in store.recently_removed(conn, window=timedelta(hours=1))} == {2, 3}
+    assert {r["transaction_id"] for r in store.recently_removed(conn, window=timedelta(hours=4))} == {2, 3, 4}
+    rows = {r["transaction_id"]: r for r in store.recently_removed(conn, window=timedelta(hours=4))}
+    assert rows[4]["vanished_at"] == 3600.0  # first snapshot where it is absent
+    assert rows[3]["vanished_at"] == 7200.0
+    assert rows[2]["vanished_at"] == 10800.0
     conn.close()
 
 

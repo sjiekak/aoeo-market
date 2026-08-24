@@ -229,6 +229,21 @@ def test_recently_removed_endpoint(tmp_path):
     assert '"reason"' in body.decode()
 
 
+def test_recently_removed_window_param(tmp_path):
+    app = app_for(tmp_path)
+    # A valid number of seconds still returns the listing that vanished in the seed data.
+    status, _, body = app.handle("/api/recently-removed", {"window": ["86400"]})
+    assert status == 200
+    assert "Axe_R_I" in body.decode()
+    # A non-numeric or non-positive window is rejected with a 400.
+    status, _, body = app.handle("/api/recently-removed", {"window": ["abc"]})
+    assert status == 400
+    assert "number of seconds" in body.decode()
+    status, _, body = app.handle("/api/recently-removed", {"window": ["0"]})
+    assert status == 400
+    assert "positive" in body.decode()
+
+
 def test_empty_database_responses(tmp_path):
     app = WebApp(str(tmp_path / "empty.db"))
     status, _, body = app.handle("/api/overview")
