@@ -386,18 +386,19 @@ def _median_prices_by_item(conn: duckdb.DuckDBPyConnection, snapshot_id: int) ->
 
 
 def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int = 2000) -> dict | None:
-    """Current listings plus the price series of one item across all snapshots.
+    """Current and previous listings plus the price series of one item.
 
     Prices are per unit (item_price / item_count) so listings of different
     stack sizes stay comparable.  Returns ``None`` when the item was never
-    observed.  The raw scatter points are downsampled evenly to *max_points*
-    so long histories stay chartable.
+    observed.  ``current`` is the item's active listings; ``previous`` lists
+    the vanished ones (first/last seen, vanished-at, and the EXPIRED vs
+    REMOVED classification), newest first.  The raw scatter points are
+    downsampled evenly to *max_points* so long histories stay chartable.
     """
     rows = _rows(
         conn,
         """
-        SELECT s.id AS sid, s.captured_at AS t, l.item_price AS price, l.item_count AS count,
-               l.item_type AS item_type, l.item_level AS item_level
+        SELECT l.*, s.captured_at AS t
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
         WHERE l.item_id = ?
         ORDER BY s.id, l.item_price
@@ -408,11 +409,22 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         return None
 
     latest = latest_snapshot(conn)
+    active_txs: set[int] = set()
+    if latest:
+        active_txs = {
+            r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ? AND item_id = ?", [latest["id"], item_id])
+        }
+
+    snaps = {r["id"]: r["captured_at"] for r in _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")}
+    snap_ids = sorted(snaps)
+    next_sid = {snap_ids[i]: snap_ids[i + 1] for i in range(len(snap_ids) - 1)}
+
     series: dict[int, dict] = {}
     points: list[dict] = []
+    txs: dict[int, dict] = {}
     for r in rows:
-        sid = r["sid"]
-        unit = r["price"] / max(r["count"], 1)
+        sid = r["snapshot_id"]
+        unit = r["item_price"] / max(r["item_count"], 1)
         series.setdefault(
             sid,
             {"t": r["t"], "prices": [], "count": 0, "item_type": r["item_type"], "item_level": r["item_level"]},
@@ -420,6 +432,12 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         series[sid]["prices"].append(unit)
         series[sid]["count"] += 1
         points.append({"t": r["t"], "price": round(unit, 2)})
+
+        tx = txs.get(r["transaction_id"])
+        if tx is None:
+            tx = txs[r["transaction_id"]] = {"first_seen": r["t"], "row": r}
+        else:
+            tx["row"] = r  # rows are ordered by snapshot id, so the last wins
 
     def summarize(s: dict) -> dict:
         p = s["prices"]
@@ -434,6 +452,31 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     ordered = [summarize(series[sid]) for sid in sorted(series)]
     current = active_listings(conn, latest["id"], q=item_id) if latest else []
     current = [c for c in current if c["item_id"] == item_id]
+
+    previous: list[dict] = []
+    for tx_id, t in txs.items():
+        if tx_id in active_txs:
+            continue
+        row = t["row"]
+        remaining = row["seconds_till_expiry"]
+        reason = "EXPIRED" if remaining < EXPIRY_WINDOW_SECONDS else "REMOVED"
+        nxt = next_sid.get(row["snapshot_id"])
+        vanished_at = snaps[nxt] if nxt is not None else (latest["captured_at"] if latest else None)
+        previous.append(
+            {
+                "transaction_id": tx_id,
+                "seller_empire_id": row["seller_empire_id"],
+                "item_price": row["item_price"],
+                "item_count": row["item_count"],
+                "unit_price": round(row["item_price"] / max(row["item_count"], 1), 2),
+                "seconds_till_expiry": row["seconds_till_expiry"],
+                "first_seen": t["first_seen"],
+                "last_seen": row["t"],
+                "vanished_at": vanished_at,
+                "reason": reason,
+            }
+        )
+    previous.sort(key=lambda d: d["vanished_at"] or 0.0, reverse=True)
 
     if len(points) > max_points:
         step = len(points) / max_points
@@ -452,6 +495,7 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         "rarity_rank": rar[0] if rar else 0,
         **extra,
         "current": current,
+        "previous": previous,
         "series": ordered,
         "points": points,
     }

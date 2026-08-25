@@ -324,50 +324,52 @@ def build_ping_payload(seq: int = 0) -> bytes:
 # 2025-08-25, gear types browsed alphabetically).
 WILDCARD = 0xFFFFFFFF
 
-#: Gear ("Trait") type selector values (word[5]), in the order the game browses
-#: them (alphabetical by type name).
-_GEAR_TYPE_SELECTORS: tuple[int, ...] = (
-    67,
-    68,
-    777,
-    70,
-    71,
-    64,
-    75,
-    79,
-    72,
-    73,
-    91,
-    89,
-    84,
-    85,
-    80,
-    77,
-    65,
-    83,
-    66,
-    81,
-    82,
-    63,
-    78,
-    92,
-    90,
-    86,
-    76,
-    93,
-    74,
-    87,
-    69,
-    133,
-    134,
-    138,
-    88,
-)
+#: Gear ("Trait") type selector ids (word[5]) by type name.  Insertion order is
+#: the browse order — alphabetical by type name — which is how the game queries
+#: the marketplace; the ids themselves are opaque enum values captured from a
+#: full-browse session.
+GEAR_TYPE_SELECTORS: dict[str, int] = {
+    "Armor Plating": 67,
+    "Arrows": 68,
+    "Banner": 777,
+    "Belly Bow": 70,
+    "Bow": 71,
+    "Cloth Armor": 64,
+    "Construction Addition": 75,
+    "Engineering Accessory": 79,
+    "Fire Pot": 72,
+    "Fishing Nets": 73,
+    "Great Axe": 91,
+    "Heavy Club": 89,
+    "Heavy Spear": 84,
+    "Holy Staff": 85,
+    "Javelin": 80,
+    "Laborer Gear": 77,
+    "Light Armor": 65,
+    "Light Spear": 83,
+    "Medium Armor": 66,
+    "Merchant Gear": 81,
+    "Ram Head": 82,
+    "Reinforced Construction": 63,
+    "Religious Item": 78,
+    "Scepter": 92,
+    "Scout Special": 90,
+    "Shield": 86,
+    "Ship Accessory": 76,
+    "Sling": 93,
+    "Soldiers' Gear": 74,
+    "Sword": 87,
+    "Throwing Arm": 69,
+    "Torc": 133,
+    "War Horn": 134,
+    "Warpaint": 138,
+    "Work Tools": 88,
+}
 
 #: The complete "whole market" sweep — one query per (category, sub-filter)
 #: shape, exactly as the game browsed it.
 DEFAULT_MARKET_SWEEP: tuple[tuple[int, ...], ...] = tuple(
-    [(3, WILDCARD, WILDCARD, WILDCARD, WILDCARD, t, 0, WILDCARD, 0) for t in _GEAR_TYPE_SELECTORS]
+    [(3, WILDCARD, WILDCARD, WILDCARD, WILDCARD, t, 0, WILDCARD, 0) for t in GEAR_TYPE_SELECTORS.values()]
     + [
         (6, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # advisors
         (9, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # consumables

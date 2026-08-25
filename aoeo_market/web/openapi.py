@@ -153,8 +153,8 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         },
         "/api/item/{item_id}": {
             "get": {
-                "summary": "Current listings plus the full price history of one item",
-                "description": "Per-unit price series (median per observation plus downsampled raw points) and the item's current listings.",
+                "summary": "Current and previous listings plus the full price history of one item",
+                "description": "Per-unit price series (median per observation plus downsampled raw points), the item's current listings, and its previous (vanished) listings with the EXPIRED vs REMOVED classification.",
                 "parameters": [
                     {
                         "name": "item_id",
