@@ -311,24 +311,72 @@ def build_ping_payload(seq: int = 0) -> bytes:
 
 
 # Market query category selectors, as seen in captured 0xAB payloads. 0xFFFFFFFF
-# is a wildcard ("any"). The client's browse iterated several category tuples;
-# the shapes below are the exact selector sets the game sent (capture
-# 2026-08-10) and are replayed as the default "whole market" sweep.
+# is a wildcard ("any").  Each query carries nine 32-bit selector words; word[0]
+# is the top-level category:
+#
+#     1 materials    2 blueprints    3 gear ("Trait")    4 designs
+#     6 advisors     9 consumables
+#
+# An all-wildcard query is *not* answered, so every category keeps the game's
+# own selector shape.  The sweep below replays the complete enumeration the
+# game sent while iterating every category (capture
+# ``capture_aoeo_login_market_iterate_over_several_listings.pcapng``,
+# 2025-08-25, gear types browsed alphabetically).
 WILDCARD = 0xFFFFFFFF
 
-#: The ten query shapes the game used to sweep the marketplace.  Each entry is
-#: the nine 32-bit selector words that follow the 8-byte sequence field.
-DEFAULT_MARKET_SWEEP: tuple[tuple[int, ...], ...] = (
-    (3, WILDCARD, WILDCARD, WILDCARD, 5, 67, 0, WILDCARD, 0),
-    (3, WILDCARD, WILDCARD, WILDCARD, 5, 68, 0, WILDCARD, 0),
-    (3, WILDCARD, WILDCARD, WILDCARD, 5, 64, 0, WILDCARD, 0),
-    (6, WILDCARD, WILDCARD, 3, 4, WILDCARD, WILDCARD, WILDCARD, 0),
-    (6, WILDCARD, WILDCARD, 3, 5, WILDCARD, WILDCARD, WILDCARD, 0),
-    (6, WILDCARD, WILDCARD, 3, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),
-    (1, WILDCARD, WILDCARD, WILDCARD, 4, WILDCARD, WILDCARD, WILDCARD, 0),
-    (1, WILDCARD, WILDCARD, WILDCARD, 5, WILDCARD, WILDCARD, WILDCARD, 0),
-    (1, WILDCARD, WILDCARD, WILDCARD, 3, WILDCARD, WILDCARD, WILDCARD, 0),
-    (4, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 3),
+#: Gear ("Trait") type selector values (word[5]), in the order the game browses
+#: them (alphabetical by type name).
+_GEAR_TYPE_SELECTORS: tuple[int, ...] = (
+    67,
+    68,
+    777,
+    70,
+    71,
+    64,
+    75,
+    79,
+    72,
+    73,
+    91,
+    89,
+    84,
+    85,
+    80,
+    77,
+    65,
+    83,
+    66,
+    81,
+    82,
+    63,
+    78,
+    92,
+    90,
+    86,
+    76,
+    93,
+    74,
+    87,
+    69,
+    133,
+    134,
+    138,
+    88,
+)
+
+#: The complete "whole market" sweep — one query per (category, sub-filter)
+#: shape, exactly as the game browsed it.
+DEFAULT_MARKET_SWEEP: tuple[tuple[int, ...], ...] = tuple(
+    [(3, WILDCARD, WILDCARD, WILDCARD, WILDCARD, t, 0, WILDCARD, 0) for t in _GEAR_TYPE_SELECTORS]
+    + [
+        (6, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # advisors
+        (9, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # consumables
+        (4, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 3),  # designs
+        (4, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 8),  # designs
+        (4, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0, 1),  # designs
+        (1, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # materials
+        (2, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, WILDCARD, 0),  # blueprints
+    ]
 )
 
 
@@ -336,11 +384,10 @@ def build_market_query_payload(seq: int, selectors: list[int]) -> bytes:
     """Build an OP_MARKET_QUERY (0xAB) body.
 
     ``selectors`` is the sequence of 32-bit little-endian filter words that
-    follow the 8-byte counter in the captured requests — **nine** words, not
-    six: every captured 0xAB payload is 44 bytes (8-byte sequence + 9
-    selectors).  Use :data:`WILDCARD` for "any".  Exact selector semantics
-    (category / rarity / level) are only partially reversed; the captured
-    :data:`DEFAULT_MARKET_SWEEP` shapes are the safe default.
+    follow the 8-byte sequence field in the captured requests — **nine** words,
+    not six: every captured 0xAB payload is 44 bytes (8-byte sequence + 9
+    selectors).  Use :data:`WILDCARD` for "any".  :data:`DEFAULT_MARKET_SWEEP`
+    is the complete category enumeration (see its comment).
     """
     body = struct.pack("<Q", seq)
     for s in selectors:
