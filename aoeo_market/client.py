@@ -185,10 +185,11 @@ class MarketClient:
     def request_market(self, sweep: list[list[int]] | None = None) -> None:
         """Send the market browse sweep.
 
-        By default the captured ten-query sweep
-        (:data:`aoeo_market.protocol.DEFAULT_MARKET_SWEEP`) is replayed.  An
-        all-wildcard query is *not* answered by the server — the queries must
-        keep the game's selector shapes.
+        By default the complete 42-query sweep
+        (:data:`aoeo_market.protocol.DEFAULT_MARKET_SWEEP`) is replayed — one
+        query per (category, sub-filter) shape.  An all-wildcard query is *not*
+        answered by the server — the queries must keep the game's selector
+        shapes.
         """
         if sweep is None:
             sweep = [list(s) for s in proto.DEFAULT_MARKET_SWEEP]

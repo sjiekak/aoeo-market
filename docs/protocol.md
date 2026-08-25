@@ -87,7 +87,7 @@ rather than relying on frame boundaries (`protocol.iter_zlib_members`).
   <TransactionId>...</TransactionId>       <!-- stable per-listing primary key -->
   <BuyerCharacterId>-1</BuyerCharacterId>  <!-- always -1 in the public browse -->
   <ItemID>ArmorPlt_Halloween2025</ItemID>
-  <ItemType>Trait|Advisor|Material|Design</ItemType>
+  <ItemType>Trait|Advisor|Material|Design|Blueprint|Consumable</ItemType>
   <ItemLevel/> <ItemCount/> <ItemPrice/> <ItemSeed/>
   <SecondsTillExpiry>...</SecondsTillExpiry> <!-- countdown; max 30 days -->
 </MarketPlaceItemInfo>
@@ -97,6 +97,23 @@ rather than relying on frame boundaries (`protocol.iter_zlib_members`).
 
 `opcode 0xAB` — **market browse query**. The payload is an 8-byte little-endian
 sequence field followed by **nine** 32-bit little-endian filter words;
-`0xFFFFFFFF` = wildcard. The client issues several queries iterating
-category/rarity/level tuples — a broadly-wildcarded query is expected to
-return the whole market.
+`0xFFFFFFFF` = wildcard. An all-wildcard query is **not** answered, so the
+client enumerates the market with one query per (category, sub-filter) shape.
+
+The first word (`word[0]`) is the top-level category:
+
+| word[0] | category | wire `ItemType` |
+|---|---|---|
+| 1 | materials | `Material` |
+| 2 | blueprints | `Blueprint` |
+| 3 | gear | `Trait` |
+| 4 | recipes (designs) | `Design` |
+| 6 | advisors | `Advisor` |
+| 9 | consumables | `Consumable` |
+
+Gear (category 3) is the only category with sub-filters: its sixth word
+(`word[5]`) selects the gear type, one query per type in alphabetical order —
+the name → id mapping lives in `aoeo_market.protocol.GEAR_TYPE_SELECTORS`. The
+complete 42-query sweep (`protocol.DEFAULT_MARKET_SWEEP`) replays exactly what
+the game sent while browsing every category (capture
+`capture_aoeo_login_market_iterate_over_several_listings.pcapng`, 2025-08-25).

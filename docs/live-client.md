@@ -32,9 +32,10 @@ What the live run confirmed:
   eight-message bundle (counters 1..8), byte-identical to what the game
   sends; the server answered 0xF2 with the `02 01` status prefix and the
   initial `<Empire><Offers>` document.
-- `MarketClient.poll_once()` — the captured ten-query selector sweep returns
-  the whole market (an all-wildcard query is *not* answered), and the
-  UTF-8/UTF-16 XML parsing + observer diffing behave as designed.
+- `MarketClient.poll_once()` — the captured 42-query selector sweep returns
+  the whole market across all six categories (an all-wildcard query is *not*
+  answered), and the UTF-8/UTF-16 XML parsing + observer diffing behave as
+  designed.
 
 Remaining caveats:
 

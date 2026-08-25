@@ -48,9 +48,10 @@ uv run python -m aoeo_market.web --db market.db                    # serve the d
 The offline pipeline (codec, parser, observer) is implemented and tested against
 real packet captures, and the live path (4564 login → 1510 login bundle →
 market sweep → observe) has been run successfully against the real servers:
-a live poll returns the whole marketplace (~650 listings) and the observer
-emits LISTED / REMOVED events across polls. Run `uv run pytest` to validate
-everything that does not need a live server.
+a live poll returns the whole marketplace (all six categories — gear, advisors,
+consumables, designs, materials, blueprints) and the observer emits LISTED /
+REMOVED events across polls. Run `uv run pytest` to validate everything that
+does not need a live server.
 
 
 ```
