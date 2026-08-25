@@ -28,7 +28,7 @@ from .constants import (
     GAME_SERVER_HOST,
     GAME_SERVER_PORT,
 )
-from .market import Listing
+from .market import Listing, summarize
 from .observer import Event, MarketObserver
 from .pcap_source import listings_from_pcap
 
@@ -44,6 +44,17 @@ def _print_listings(listings: list[Listing]) -> None:
             f"{l.item_id:28.28} {l.item_type:9.9} {l.item_level:3d} {l.item_count:3d} "
             f"{l.item_price:8d} {l.seconds_till_expiry / 86400:10.1f}  {l.seller_empire_id}"
         )
+
+
+def _report_summary(listings: list[Listing]) -> None:
+    """One-line completeness summary to stderr (shown even with ``--quiet``).
+
+    Turns the "am I missing items?" question into a number the operator can
+    compare across runs and against the in-game marketplace.
+    """
+    s = summarize(listings)
+    types = ", ".join(f"{t}={n}" for t, n in sorted(s["by_type"].items()))
+    print(f"fetched {s['total']} listings, {s['distinct_items']} distinct items ({types})", file=sys.stderr)
 
 
 def _print_event(ev: Event) -> None:
@@ -172,6 +183,7 @@ def _record_snapshot(target: str, listings: list[Listing]) -> bool:
 def _watch(mc: MarketClient, interval: float, store_target: str | None = None, quiet: bool = False) -> int:
     """Prime the observer with the current snapshot, then stream events."""
     listings = mc.fetch_listings()
+    _report_summary(listings)
     if store_target:
         _record_snapshot(store_target, listings)
     if not quiet:
@@ -221,6 +233,7 @@ def _fetch(args: argparse.Namespace) -> int:
         if args.watch:
             return _watch(mc, args.interval, args.store, args.quiet)
         listings = mc.fetch_listings()
+        _report_summary(listings)
         if args.store and not _record_snapshot(args.store, listings):
             return 1  # the snapshot target rejected the write: fail the run
         if not args.quiet:

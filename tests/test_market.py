@@ -2,23 +2,41 @@
 
 import pytest
 
-from aoeo_market.market import Listing, rarity_of
+from aoeo_market.market import Listing, rarity_of, summarize
 
 
-def test_listing_to_dict_roundtrip():
-    listing = Listing(
-        transaction_id=1,
+def _mk(tx: int, item_id: str, item_type: str) -> Listing:
+    return Listing(
+        transaction_id=tx,
         seller_empire_id=7,
         buyer_character_id=-1,
-        item_id="X_E_I",
-        item_type="Trait",
+        item_id=item_id,
+        item_type=item_type,
         item_level=2,
-        item_count=3,
+        item_count=1,
         item_price=4,
         item_seed=5,
         seconds_till_expiry=6,
     )
+
+
+def test_listing_to_dict_roundtrip():
+    listing = _mk(1, "X_E_I", "Trait")
     assert Listing(**listing.to_dict()) == listing
+
+
+def test_summarize_counts_total_distinct_and_types():
+    listings = [
+        _mk(1, "A_U_I", "Trait"),
+        _mk(2, "A_U_I", "Trait"),  # same item id: not distinct
+        _mk(3, "B_E_I", "Advisor"),
+    ]
+    s = summarize(listings)
+    assert s["total"] == 3
+    assert s["distinct_items"] == 2
+    assert s["by_type"] == {"Trait": 2, "Advisor": 1}
+
+    assert summarize([]) == {"total": 0, "distinct_items": 0, "by_type": {}}
 
 
 @pytest.mark.parametrize(
