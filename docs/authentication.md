@@ -166,8 +166,10 @@ byte-verified against the 2026-08-17 capture.
 Validated live from the capture machine (2026-08-17): the 4564 login with the
 corrected constants was accepted and re-issued the exact token seen in the
 2026-08-13 capture, the 1510 login bundle was answered with the 0xF2 reply and
-its `<Empire><Offers>` document, and a market sweep returned the full
-marketplace (~650 listings). See [live-client.md](live-client.md).
+its `<Empire><Offers>` document, and a market sweep returned a snapshot. (That
+early sweep covered only four of the six categories; the full six-category
+sweep is documented in [protocol.md](protocol.md).) See
+[live-client.md](live-client.md).
 
 Remaining caveats:
 

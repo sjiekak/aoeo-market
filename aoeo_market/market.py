@@ -18,6 +18,7 @@ Record shape observed on the wire::
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 # The server browse only ever returns active listings, for which BuyerCharacterId
@@ -96,6 +97,19 @@ class Listing:
             "item_seed": self.item_seed,
             "seconds_till_expiry": self.seconds_till_expiry,
         }
+
+
+def summarize(listings: list[Listing]) -> dict:
+    """Completeness summary of a fetched snapshot.
+
+    Returns ``{"total": n, "distinct_items": n, "by_type": {item_type: n}}`` so
+    the live fetch can report how complete a sweep looks and compare runs.
+    """
+    return {
+        "total": len(listings),
+        "distinct_items": len({l.item_id for l in listings}),
+        "by_type": dict(Counter(l.item_type for l in listings)),
+    }
 
 
 def parse_listings(data: bytes) -> list[Listing]:

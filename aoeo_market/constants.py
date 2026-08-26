@@ -31,3 +31,7 @@ DEFAULT_POLL_INTERVAL = 30.0
 
 DEFAULT_CONNECT_TIMEOUT = 15.0
 """Socket connect/read timeout in seconds."""
+
+MIN_DRAIN_BUDGET = 40.0
+"""Minimum seconds to keep reading a market response (safety floor against
+truncating a slow or streamed reply)."""

@@ -5,7 +5,9 @@ import zlib
 
 from aoeo_market.observer import MarketObserver, RemovalReason
 from aoeo_market.protocol import (
+    DEFAULT_MARKET_SWEEP,
     DEFAULT_SETTINGS,
+    GEAR_TYPE_SELECTORS,
     Frame,
     build_login_payload,
     build_settings_xml,
@@ -37,6 +39,35 @@ def test_login_payload_layout():
     assert body[1:9] == (0x0123456789ABCDEF).to_bytes(8, "little")
     assert body[9:13] == (5).to_bytes(4, "little")
     assert body[13:18] == b"dummy"
+
+
+def test_gear_type_selector_mapping():
+    """Gear type names are documented and drive the sweep in browse order."""
+    assert len(GEAR_TYPE_SELECTORS) == 35
+    assert list(GEAR_TYPE_SELECTORS) == sorted(GEAR_TYPE_SELECTORS)  # alphabetical
+    # a few known id pins captured from the full-browse session
+    assert GEAR_TYPE_SELECTORS["Shield"] == 86
+    assert GEAR_TYPE_SELECTORS["Banner"] == 777
+    assert GEAR_TYPE_SELECTORS["Warpaint"] == 138
+    assert GEAR_TYPE_SELECTORS["Work Tools"] == 88
+    # the sweep's gear queries are exactly this mapping, in order
+    gear = [q[5] for q in DEFAULT_MARKET_SWEEP if q[0] == 3]
+    assert gear == list(GEAR_TYPE_SELECTORS.values())
+
+
+def test_market_sweep_covers_all_six_categories():
+    """The default sweep enumerates every top-level category the game browses
+    (materials, blueprints, gear, designs, advisors, consumables)."""
+    assert {q[0] for q in DEFAULT_MARKET_SWEEP} == {1, 2, 3, 4, 6, 9}
+    assert len(DEFAULT_MARKET_SWEEP) == 42
+    # gear (category 3) is subdivided per type: one query per type selector.
+    gear = [q for q in DEFAULT_MARKET_SWEEP if q[0] == 3]
+    assert len(gear) == 35
+    assert len({q[5] for q in gear}) == 35
+    # each other category keeps the game's (single) selector shape.
+    assert len([q for q in DEFAULT_MARKET_SWEEP if q[0] == 4]) == 3  # designs
+    for cat in (1, 2, 6, 9):
+        assert len([q for q in DEFAULT_MARKET_SWEEP if q[0] == cat]) == 1
 
 
 def test_default_settings_document():

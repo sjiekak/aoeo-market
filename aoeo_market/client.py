@@ -52,6 +52,7 @@ from .constants import (
     DEFAULT_POLL_INTERVAL,
     GAME_SERVER_HOST,
     GAME_SERVER_PORT,
+    MIN_DRAIN_BUDGET,
 )
 from .market import Listing, parse_listings
 from .observer import Event, MarketObserver
@@ -184,10 +185,11 @@ class MarketClient:
     def request_market(self, sweep: list[list[int]] | None = None) -> None:
         """Send the market browse sweep.
 
-        By default the captured ten-query sweep
-        (:data:`aoeo_market.protocol.DEFAULT_MARKET_SWEEP`) is replayed.  An
-        all-wildcard query is *not* answered by the server — the queries must
-        keep the game's selector shapes.
+        By default the complete 42-query sweep
+        (:data:`aoeo_market.protocol.DEFAULT_MARKET_SWEEP`) is replayed — one
+        query per (category, sub-filter) shape.  An all-wildcard query is *not*
+        answered by the server — the queries must keep the game's selector
+        shapes.
         """
         if sweep is None:
             sweep = [list(s) for s in proto.DEFAULT_MARKET_SWEEP]
@@ -219,6 +221,14 @@ class MarketClient:
         return parse_listings(merged)
 
     # -- loop -------------------------------------------------------------
+    def _default_drain_budget(self) -> float:
+        """Seconds to keep reading a market reply when the caller didn't ask.
+
+        Floored at :data:`aoeo_market.constants.MIN_DRAIN_BUDGET` so a slow or
+        streamed response is not truncated; a longer poll interval raises it.
+        """
+        return max(self.poll_interval, MIN_DRAIN_BUDGET)
+
     def fetch_listings(self, sweep: list[list[int]] | None = None, budget: float | None = None) -> list[Listing]:
         """Send the market browse sweep and return the raw active listings.
 
@@ -227,7 +237,7 @@ class MarketClient:
         """
         self.request_market(sweep)
         if budget is None:
-            budget = min(self.poll_interval, 20.0)
+            budget = self._default_drain_budget()
         return self._drain_listings(budget=budget)
 
     def poll_once(self, sweep: list[list[int]] | None = None) -> list[Event]:
