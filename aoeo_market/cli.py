@@ -21,7 +21,8 @@ import argparse
 import sys
 import time
 
-from .cli_args import add_login_args, parse_device_hash, parse_tail, resolve_local_ip
+from . import auth
+from .cli_args import add_login_args, parse_device_hash, resolve_local_ip, resolve_xlive_crc
 from .client import MarketClient
 from .constants import (
     DEFAULT_POLL_INTERVAL,
@@ -103,18 +104,18 @@ def _replay(args: argparse.Namespace) -> int:
 
 
 def _login_identity(args: argparse.Namespace) -> tuple[str, bytes] | int:
-    """Validate the ``--device-hash`` / ``--tail`` pair for a live command.
+    """Validate the ``--device-hash`` / ``--xlive-crc`` pair for a live command.
 
-    Returns ``(device_hash, opaque_tail)``, or the process exit code 2 after
+    Returns ``(device_hash, xlive_crc32)``, or the process exit code 2 after
     reporting a malformed value.
     """
     try:
         device_hash = parse_device_hash(args.device_hash)
-        opaque = parse_tail(args.tail)
-    except ValueError as exc:
+        xlive_crc32 = resolve_xlive_crc(args.xlive_crc)
+    except (ValueError, auth.XliveManifestError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    return device_hash, opaque
+    return device_hash, xlive_crc32
 
 
 def _probe(args: argparse.Namespace) -> int:
@@ -123,7 +124,7 @@ def _probe(args: argparse.Namespace) -> int:
     identity = _login_identity(args)
     if isinstance(identity, int):
         return identity
-    device_hash, opaque = identity
+    device_hash, xlive_crc32 = identity
     return probe(
         local_ip=args.local_ip,
         mail=args.email,
@@ -133,7 +134,7 @@ def _probe(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         try_game=args.game,
         device_hash=device_hash,
-        opaque=opaque,
+        xlive_crc32=xlive_crc32,
     )
 
 
@@ -200,12 +201,13 @@ def _watch(mc: MarketClient, interval: float, store_target: str | None = None, q
 
 
 def _fetch(args: argparse.Namespace) -> int:
+    from .auth import LoginRejected
     from .live_probe import resolve_credentials
 
     identity = _login_identity(args)
     if isinstance(identity, int):
         return identity
-    device_hash, opaque = identity
+    device_hash, xlive_crc32 = identity
 
     mail, password = resolve_credentials(args.email, args.password)
     mc = MarketClient(
@@ -216,20 +218,24 @@ def _fetch(args: argparse.Namespace) -> int:
     )
     try:
         print(f"Logging in over Celeste Network {args.host}:{args.port} ...", file=sys.stderr)
-        session = mc.acquire_session(
-            mail,
-            password,
-            args.local_ip,
-            host=args.host,
-            port=args.port,
-            device_hash=device_hash,
-            opaque=opaque,
-        )
-        print(
-            f"Logged in as {session.username} (xuid {session.xuid}); connecting to game service {args.game_host}:{args.game_port} ...",
-            file=sys.stderr,
-        )
-        mc.login(session)
+        try:
+            session = mc.acquire_session(
+                mail,
+                password,
+                args.local_ip,
+                host=args.host,
+                port=args.port,
+                device_hash=device_hash,
+                xlive_crc32=xlive_crc32,
+            )
+            print(
+                f"Logged in as {session.username} (xuid {session.xuid}); connecting to game service {args.game_host}:{args.game_port} ...",
+                file=sys.stderr,
+            )
+            mc.login(session)
+        except LoginRejected as exc:
+            print(f"error: login rejected: {exc}", file=sys.stderr)
+            return 1
         if args.watch:
             return _watch(mc, args.interval, args.store, args.quiet)
         listings = mc.fetch_listings()

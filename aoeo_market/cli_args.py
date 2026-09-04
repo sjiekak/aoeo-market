@@ -2,11 +2,13 @@
 
 The Celeste Network login arguments (``--local-ip``, ``--email``,
 ``--password``, ``--host``, ``--port``, ``--timeout``, ``--device-hash``,
-``--tail``) are declared here once and attached by both
+``--xlive-crc``) are declared here once and attached by both
 :mod:`aoeo_market.cli` (``probe`` and ``fetch``) and
-:mod:`aoeo_market.live_probe`.  The per-install ``--device-hash`` and
-``--tail`` defaults are the captured constants from :mod:`aoeo_market.auth`,
-set here so the commands themselves never infer them.
+:mod:`aoeo_market.live_probe`.  The per-install ``--device-hash`` default is
+the captured constant from :mod:`aoeo_market.auth`; ``--xlive-crc`` (the
+4-byte CRC-32 of the installed xlive.dll) defaults to the value published in
+the live Celeste manifest (:func:`aoeo_market.auth.fetch_xlive_crc32`), so
+the commands never infer a stale fingerprint.
 
 ``--local-ip`` is optional: when it is omitted, the locally detected IPv4
 address (:func:`detect_local_ip`) is used as the default, exactly the value
@@ -34,7 +36,7 @@ def detect_local_ip(
 
     Connects a UDP socket to ``host:port`` — nothing is sent — and reads the
     local address the kernel picks as the packet source: the same IPv4 the
-    game embeds in the login tail.  Raises :class:`OSError` when no usable
+    game embeds in the login install signature.  Raises :class:`OSError` when no usable
     IPv4 route exists (e.g. the machine is offline), so callers can fall back
     to an explicit ``--local-ip``.
     """
@@ -62,7 +64,7 @@ def add_login_args(parser: argparse.ArgumentParser) -> None:
     """Add the shared Celeste Network login/connection arguments to ``parser``."""
     parser.add_argument(
         "--local-ip",
-        help="your local IPv4 address (embedded in the login tail; auto-detected when omitted)",
+        help="your local IPv4 address (embedded in the install signature; auto-detected when omitted)",
     )
     parser.add_argument("--email", help="account email (or $AOEO_EMAIL)")
     parser.add_argument("--password", help="account password (or $AOEO_PASSWORD)")
@@ -89,9 +91,9 @@ def add_login_args(parser: argparse.ArgumentParser) -> None:
         help="64-hex per-install fingerprint overriding the captured default",
     )
     parser.add_argument(
-        "--tail",
-        default=auth.LOGIN_TAIL_OPAQUE.hex(),
-        help="4-byte hex per-install login tail overriding the captured default",
+        "--xlive-crc",
+        default=None,
+        help="4-byte hex CRC-32 of the installed xlive.dll (fetched from the live Celeste manifest when omitted)",
     )
 
 
@@ -102,12 +104,30 @@ def parse_device_hash(value: str) -> str:
     return value
 
 
-def parse_tail(value: str) -> bytes:
-    """Convert a ``--tail`` hex string to its 4 opaque bytes."""
+def parse_xlive_crc(value: str) -> bytes:
+    """Convert a ``--xlive-crc`` hex string to its 4 little-endian bytes."""
     try:
-        tail = bytes.fromhex(value)
+        crc = bytes.fromhex(value)
     except ValueError:
-        raise ValueError("--tail must be hex") from None
-    if len(tail) != 4:
-        raise ValueError("--tail must be exactly 4 bytes of hex")
-    return tail
+        raise ValueError("--xlive-crc must be hex") from None
+    if len(crc) != 4:
+        raise ValueError("--xlive-crc must be exactly 4 bytes of hex")
+    return crc
+
+
+def resolve_xlive_crc(value: str | None) -> bytes:
+    """Return the 4-byte xlive.dll CRC-32 for the login install signature.
+
+    An explicit ``--xlive-crc`` hex value wins; otherwise the live Celeste
+    manifest (:data:`auth.XLIVE_MANIFEST_URL`) is fetched so the signature
+    always matches the currently shipped xlive.dll.  A fetch failure raises
+    :class:`aoeo_market.auth.XliveManifestError` — the command stops instead
+    of guessing with a stale captured CRC (a stale CRC is indistinguishable
+    from a rejected login).
+    """
+    if value:
+        return parse_xlive_crc(value)
+    try:
+        return auth.fetch_xlive_crc32()
+    except auth.XliveManifestError as exc:
+        raise auth.XliveManifestError(f"{exc}; pass --xlive-crc <4-byte-hex> explicitly to override") from exc
