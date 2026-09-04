@@ -103,6 +103,31 @@ def test_price_history_series_and_points(tmp_path):
     conn.close()
 
 
+def test_price_history_previous_listings(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    # tx1 (long countdown) and tx2 (short countdown) both vanish s1 -> s2;
+    # tx3 appears in s2 and is still active in s3 (current).
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="Gone_U_I", price=100, expiry=200_000), mk(2, item_id="Gone_U_I", price=50, expiry=500)],
+        captured_at=1000.0,
+    )
+    store.record_snapshot(conn, [mk(3, item_id="Gone_U_I", price=150, expiry=200_000)], captured_at=2000.0)
+    store.record_snapshot(conn, [mk(3, item_id="Gone_U_I", price=150, expiry=150_000)], captured_at=3000.0)
+
+    hist = store.price_history(conn, "Gone_U_I")
+    assert [c["transaction_id"] for c in hist["current"]] == [3]
+    prev = {p["transaction_id"]: p for p in hist["previous"]}
+    assert set(prev) == {1, 2}
+    assert prev[1]["reason"] == "REMOVED"  # long countdown at last sight
+    assert prev[2]["reason"] == "EXPIRED"  # <1 day left
+    for p in prev.values():
+        assert p["first_seen"] == 1000.0
+        assert p["last_seen"] == 1000.0
+        assert p["vanished_at"] == 2000.0  # first snapshot where absent
+    conn.close()
+
+
 def test_items_not_on_sale(tmp_path):
     conn = store.open_store(tmp_path / "m.db")
     store.record_snapshot(conn, [mk(1, item_id="Gone_L_IV", price=100), mk(2, item_id="Still_U_II", price=500)], captured_at=1000.0)

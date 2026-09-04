@@ -442,6 +442,20 @@ async function loadItem(itemId) {
       </tr>`
     )
     .join("") || '<tr><td colspan="5" class="muted">not currently listed</td></tr>';
+
+  $("#item-previous").innerHTML = (it.previous || [])
+    .map(
+      (p) => `<tr>
+        <td class="num">${fmtPrice(p.unit_price)}</td>
+        <td class="num">${fmtPrice(p.item_price)}</td>
+        <td class="num">${p.item_count}</td>
+        <td>${fmtTime(p.first_seen)}</td>
+        <td class="num">${fmtTime(p.vanished_at)}</td>
+        <td><span class="badge ${p.reason === "EXPIRED" ? "expired" : "removed"}">${p.reason}</span></td>
+        <td>${esc(String(p.seller_empire_id))}</td>
+      </tr>`
+    )
+    .join("") || '<tr><td colspan="7" class="muted">no previous listings recorded</td></tr>';
 }
 
 $("#item-back").addEventListener("click", () => {
