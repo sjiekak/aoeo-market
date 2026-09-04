@@ -14,11 +14,12 @@ your session to the game server:
     * ``token``     - the 32-char game session token.
 
 ``MarketClient.acquire_session(mail, password, local_ip, device_hash=...,
-opaque=...)`` obtains all three by logging in over the plaintext "Celeste
-Network" service on TCP 4564, exactly the way the game itself
+xlive_crc32=...)`` obtains all three by logging in over the plaintext
+"Celeste Network" service on TCP 4564, exactly the way the game itself
 (``Spartan.exe`` via ``xlive.dll``) authenticates. See :mod:`aoeo_market.auth`.
-The ``device_hash`` / ``opaque`` per-install values are required — the caller
-supplies the constants for its machine.
+The ``device_hash`` per-install value and the ``xlive_crc32`` (the CRC-32 of
+the installed xlive.dll, from the published manifest) are required — the
+caller supplies them.
 
 Alternatively you can extract them once from a real login you perform with the
 official launcher (sniff your own 4564 login response, or the 1510 login frame
@@ -45,6 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import protocol as proto
+from .auth import LoginRejected
 from .constants import (
     CELESTE_NETWORK_HOST,
     CELESTE_NETWORK_PORT,
@@ -114,7 +116,7 @@ class MarketClient:
         port: int = CELESTE_NETWORK_PORT,
         *,
         device_hash: str,
-        opaque: bytes,
+        xlive_crc32: bytes,
     ) -> Session:
         """Log in over the Celeste Network (TCP 4564) and return a Session.
 
@@ -122,9 +124,10 @@ class MarketClient:
         packet, read back ``xuid`` / profile name / 32-char token, then
         register the session. See :mod:`aoeo_market.auth`.
 
-        ``device_hash`` and ``opaque`` are the per-install constants for the
-        machine this client runs on (:data:`aoeo_market.auth.DEVICE_HASH` and
-        :data:`aoeo_market.auth.LOGIN_TAIL_OPAQUE`).  They are required — no
+        ``device_hash`` is the per-install fingerprint for the machine this
+        client runs on (:data:`aoeo_market.auth.DEVICE_HASH`) and
+        ``xlive_crc32`` is the little-endian CRC-32 of the installed xlive.dll
+        (:func:`aoeo_market.auth.fetch_xlive_crc32`).  Both are required — no
         defaults are inferred here; the CLI layer chooses the values.
         """
         from . import auth
@@ -136,7 +139,7 @@ class MarketClient:
                 password,
                 local_ip,
                 device_hash=device_hash,
-                opaque=opaque,
+                xlive_crc32=xlive_crc32,
             )
         finally:
             cn.close()
@@ -153,6 +156,9 @@ class MarketClient:
         offer data (opcode 0x62, zlib ``<Empire><Offers>``); the bytes read
         during the handshake are buffered internally so the first
         :meth:`poll_once` can surface them, and are returned to the caller.
+        An 0xF2 reply whose payload starts with ``0x00`` means the server
+        rejected the login (a session that was never issued); that raises
+        :class:`aoeo_market.auth.LoginRejected`.
         """
         self.connect()
         bundle = proto.build_login_bundle(session.xuid, session.username, session.token)
@@ -176,7 +182,25 @@ class MarketClient:
                 break
             self._rx += chunk
             received += chunk
+
+        status = self._f2_reply_status()
+        if status is not None and status == 0x00:
+            raise LoginRejected("game service rejected the login (0xF2 reply status 0x00) — the session was never issued by the 4564 login")
         return received
+
+    def _f2_reply_status(self) -> int | None:
+        """The first byte of the 0xF2 login-reply payload, or ``None``.
+
+        The reply frame is ``… 00 00 00 f2 [counter] [payload]``: a successful
+        login starts its payload with ``0x01`` (the ``02 01`` status prefix the
+        server has sent in every accepted capture), while a rejected one —
+        e.g. a bogus xuid/token from a rejected 4564 login — starts with
+        ``0x00`` and the server closes the connection.
+        """
+        idx = self._rx.find(b"\x00\x00\x00\xf2")
+        if idx < 0 or idx + 5 >= len(self._rx):
+            return None
+        return self._rx[idx + 5]
 
     def ping(self) -> None:
         self._send(proto.CH_GAME, proto.OP_PING, proto.build_ping_payload())

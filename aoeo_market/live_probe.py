@@ -22,7 +22,7 @@ import os
 import sys
 
 from . import auth
-from .cli_args import add_login_args, parse_device_hash, parse_tail, resolve_local_ip
+from .cli_args import add_login_args, parse_device_hash, resolve_local_ip, resolve_xlive_crc
 from .client import MarketClient, Session
 from .constants import (
     CELESTE_NETWORK_HOST,
@@ -50,14 +50,15 @@ def probe(
     try_game: bool = False,
     *,
     device_hash: str,
-    opaque: bytes,
+    xlive_crc32: bytes,
 ) -> int:
     """Attempt a live login and return a process exit code (0 on success).
 
-    ``device_hash`` and ``opaque`` are the per-install login constants and are
-    required: this function does not infer them.  The CLI entry points
-    (:mod:`aoeo_market.cli` and :func:`main`) default them to the captured
-    values via :func:`aoeo_market.cli_args.add_login_args`.
+    ``device_hash`` is the per-install fingerprint and ``xlive_crc32`` is the
+    little-endian CRC-32 of the installed xlive.dll; both are required — this
+    function does not infer them.  The CLI entry points (:mod:`aoeo_market.cli`
+    and :func:`main`) default them to the captured values and the live
+    manifest via :func:`aoeo_market.cli_args.add_login_args`.
     """
     host = host or CELESTE_NETWORK_HOST
     port = port or CELESTE_NETWORK_PORT
@@ -66,13 +67,17 @@ def probe(
     print(f"Connecting to Celeste Network {host}:{port} ...", file=sys.stderr)
     cn = auth.CelesteNetworkClient(host=host, port=port, timeout=timeout)
     try:
-        session = cn.login(
-            mail,
-            password,
-            local_ip,
-            device_hash=device_hash,
-            opaque=opaque,
-        )
+        try:
+            session = cn.login(
+                mail,
+                password,
+                local_ip,
+                device_hash=device_hash,
+                xlive_crc32=xlive_crc32,
+            )
+        except auth.LoginRejected as exc:
+            print(f"FAILED - 4564 login rejected: {exc}", file=sys.stderr)
+            return 1
         manifest_received = cn.manifest_received
     finally:
         cn.close()
@@ -88,7 +93,6 @@ def probe(
             "manifest was not sent. The session token may still be usable "
             "for the 1510 login (try --game)."
         )
-
     if try_game:
         return _probe_game(session, timeout)
     return 0
@@ -99,13 +103,17 @@ def _probe_game(session: auth.GameSession, timeout: float) -> int:
     print("\nAttempting TCP 1510 login handshake ...", file=sys.stderr)
     mc = MarketClient(connect_timeout=timeout)
     try:
-        reply = mc.login(
-            Session(
-                xuid=session.xuid,
-                username=session.username,
-                token=session.token,
+        try:
+            reply = mc.login(
+                Session(
+                    xuid=session.xuid,
+                    username=session.username,
+                    token=session.token,
+                )
             )
-        )
+        except auth.LoginRejected as exc:
+            print(f"  FAILED - 1510 login rejected: {exc}", file=sys.stderr)
+            return 1
         print("  sent 0xF1 login bundle (8 messages, counters 1..8)")
         if reply:
             f2_seen = b"\x00\x00\x00\xf2" in reply
@@ -132,8 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     args.local_ip = resolve_local_ip(p, args.local_ip)
     try:
         device_hash = parse_device_hash(args.device_hash)
-        opaque = parse_tail(args.tail)
-    except ValueError as exc:
+        xlive_crc32 = resolve_xlive_crc(args.xlive_crc)
+    except (ValueError, auth.XliveManifestError) as exc:
         p.error(str(exc))
     return probe(
         local_ip=args.local_ip,
@@ -144,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         timeout=args.timeout,
         try_game=args.game,
         device_hash=device_hash,
-        opaque=opaque,
+        xlive_crc32=xlive_crc32,
     )
 
 

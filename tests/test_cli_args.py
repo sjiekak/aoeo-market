@@ -43,3 +43,43 @@ def test_resolve_local_ip_reports_parser_error(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         resolve_local_ip(p, None)
     assert excinfo.value.code == 2
+
+
+def test_xlive_crc_arg_is_optional():
+    p = argparse.ArgumentParser()
+    add_login_args(p)
+    args = p.parse_args([])
+    assert args.xlive_crc is None
+    args = p.parse_args(["--xlive-crc", "8ca16109"])
+    assert args.xlive_crc == "8ca16109"
+
+
+def test_resolve_xlive_crc_explicit_value():
+    assert cli_args.resolve_xlive_crc("8ca16109") == bytes.fromhex("8ca16109")
+
+
+def test_resolve_xlive_crc_fetches_manifest(monkeypatch):
+    from aoeo_market import auth
+
+    monkeypatch.setattr(auth, "fetch_xlive_crc32", lambda: bytes.fromhex("8ca16109"))
+    assert cli_args.resolve_xlive_crc(None) == bytes.fromhex("8ca16109")
+
+
+def test_resolve_xlive_crc_stops_on_fetch_failure(monkeypatch):
+    """A failed manifest fetch raises XliveManifestError instead of guessing
+    with a stale captured CRC."""
+    from aoeo_market import auth
+
+    def boom():
+        raise auth.XliveManifestError("could not fetch or parse the xlive manifest: offline")
+
+    monkeypatch.setattr(auth, "fetch_xlive_crc32", boom)
+    with pytest.raises(auth.XliveManifestError, match="--xlive-crc"):
+        cli_args.resolve_xlive_crc(None)
+
+
+def test_resolve_xlive_crc_rejects_bad_hex():
+    with pytest.raises(ValueError):
+        cli_args.resolve_xlive_crc("zz")
+    with pytest.raises(ValueError):
+        cli_args.resolve_xlive_crc("8ca161")

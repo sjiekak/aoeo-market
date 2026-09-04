@@ -9,15 +9,25 @@ Frame format (all multi-byte integers little-endian)::
 
     [4B packet id] [4B total length — INCLUDING these 8 header bytes] [body]
 
-Observed login exchange, identical across the three captures analysed
-(``capture_aoeo_login_market_query_towards_server.pcapng`` 2026-08-10,
+Observed login exchange, identical across the three pre-upgrade captures
+analysed (``capture_aoeo_login_market_query_towards_server.pcapng`` 2026-08-10,
 ``capture_aoeo_only.pcapng`` 2026-08-13,
-``capture_aoeo_login_separate_user_email_password.pcapng`` 2026-08-17):
+``capture_aoeo_login_separate_user_email_password.pcapng`` 2026-08-17) and
+re-confirmed after the 2026-09-03 server maintenance
+(``capture_aoeo_login_after_server_upgrade_two_attempts_with_official_client
+.pcapng``, 2026-09-04 — the request *format*, the response *format*, the
+version constant 2018 and the manifest reply are all unchanged):
 
 1. client -> server  packet 1: email + password (plaintext, length-prefixed)
 2. server -> client  packet 1: xuid + profile name + 32-char session token
 3. client -> server  packet 2: xuid + token + 0x2b  (session register)
 4. server -> client  packet 2: a ~135 KB JSON game-file manifest
+
+A rejected login gets a packet-1 response whose body is 67 bytes of
+``[8B zeros][32B spaces][02 00][26B zeros]`` — the success layout with the
+status byte ``0a`` replaced by ``00`` and every session field zeroed — and
+the server closes the connection (FIN) immediately after.  :meth:`login`
+raises :class:`LoginRejected` on this instead of registering a bogus session.
 
 The game also sends, on the same connection:
 
@@ -27,9 +37,9 @@ The game also sends, on the same connection:
 * packet 4/5 — ``xuid + token + 0x0e`` friend-list queries; the server answers
   ``xuid + 32 spaces + 0x0f 0x15 + u32 len + {"friend-results": …}``.
 * packet 7   — re-login: ``xuid + token + [0x01 + version 2018 + email +
-  password + tail + device hash]`` (same credentials block as packet 1,
-  prefixed by the session); the server answers with the same layout as the
-  packet-1 response.
+  password + install signature + device hash]`` (same credentials block as
+  packet 1, prefixed by the session); the server answers with the same layout
+  as the packet-1 response.
 
 The returned ``xuid`` / ``username`` / ``token`` are then fed into the 1510
 game-service login (``client.MarketClient.login``, channel 0x0101 opcode 0xF1);
@@ -39,61 +49,119 @@ the game repeats the same 0xF1 login on the 1500 lobby/realm service.
 from __future__ import annotations
 
 import ipaddress
+import json
 import socket
 import struct
+import urllib.request
 from dataclasses import dataclass
 from typing import Self
 
 from .constants import CELESTE_NETWORK_HOST, CELESTE_NETWORK_PORT
 
 # Client/protocol version constant. Present in every captured login request
-# (both the packet-1 and packet-7 forms) across all three captures analysed:
-# ``capture_aoeo_login_market_query_towards_server.pcapng`` (2026-08-10),
-# ``capture_aoeo_only.pcapng`` (2026-08-13) and
-# ``capture_aoeo_login_separate_user_email_password.pcapng`` (2026-08-17).
+# (both the packet-1 and packet-7 forms) across all three pre-upgrade captures
+# analysed: ``capture_aoeo_login_market_query_towards_server.pcapng``
+# (2026-08-10), ``capture_aoeo_only.pcapng`` (2026-08-13) and
+# ``capture_aoeo_login_separate_user_email_password.pcapng`` (2026-08-17) —
+# and unchanged in the official client's post-upgrade login
+# (``capture_aoeo_login_after_server_upgrade_two_attempts_with_official_client
+# .pcapng``, 2026-09-04).
 PROTOCOL_VERSION = 2018
 
-# The 12-byte login tail has the layout ``[4B opaque][4B local IPv4][4B 0x40
-# 00 00 00]``.  Two of the three groups are genuinely constant:
+# The 12-byte install-signature field of the login request has the layout
+# ``[4B CRC-32 of the installed xlive.dll (LE)][4B local IPv4][4B 0x40 00 00
+# 00]``.  Two of the three groups are constant in shape:
 #
 # * bytes 4..8  — the caller's local IPv4 address, network byte order
-#   (192.168.0.17 in the 2026-08-13/17 captures, 192.168.1.37 in the
-#   2026-08-10 capture; both match the packet source address);
+#   (192.168.0.17 in the 2026-08-13/17 and 2026-09-04 captures, 192.168.1.37
+#   in the 2026-08-10 capture; both match the packet source address);
 # * bytes 8..12 — ``40 00 00 00`` in every capture.
 #
-# The first group is NOT constant: it is 4 opaque bytes that are stable per
-# install (per machine) but differ between machines.  The 2026-08-10 capture
-# (machine A) used ``45 8e 0d 1e`` — the earlier code mistakenly read this as
-# a constant ``0x45`` prefix — while both 2026-08-13/17 captures (machine B,
-# different days, different accounts) used ``f6 9b 99 1a``.  Pass the right
-# value for the machine the client runs on.
-LOGIN_TAIL_OPAQUE = bytes.fromhex("f69b991a")  # machine B (2026-08-13/17)
-LOGIN_TAIL_OPAQUE_ALT = bytes.fromhex("458e0d1e")  # machine A (2026-08-10)
-LOGIN_TAIL_SUFFIX = b"\x40\x00\x00\x00"  # constant across all captures
+# The first group is the **CRC-32 of the installed xlive.dll**, little-endian.
+# Proven 2026-09-04: the Celeste manifest
+# (``https://downloads.projectceleste.com/game_files/xlive.json``) publishes
+# ``"CRC32": 157393292`` = ``0x0961A18C`` for the current xlive.dll
+# (1.0.0.106, built 2026-09-03); its little-endian bytes are ``8c a1 61 09``
+# — byte-for-byte what the updated official client sent.  The pre-upgrade
+# client sent ``f6 9b 99 1a`` (LE of ``0x1A999BF6``, the CRC-32 of the
+# previous xlive.dll build) and machine A sent ``45 8e 0d 1e`` (LE of
+# ``0x1E0D8E45``, the CRC-32 of the xlive.dll build it had on 2026-08-10):
+# the field is per xlive.dll **build**, not per machine.  The 2026-09-03
+# maintenance started rejecting stale CRCs, so the value must always match
+# the currently installed xlive.dll — :func:`fetch_xlive_crc32` reads it from
+# the published manifest at :data:`XLIVE_MANIFEST_URL`.
+XLIVE_MANIFEST_URL = "https://downloads.projectceleste.com/game_files/xlive.json"
+INSTALL_SIGNATURE_SUFFIX = b"\x40\x00\x00\x00"  # constant 4th group of the 12-byte signature
 
 
-def build_login_tail(ip: str, opaque: bytes) -> bytes:
-    """Build the 12-byte login tail for a given local IPv4 address.
+def xlive_crc32_from_manifest(data: bytes) -> bytes:
+    """Parse an xlive.json manifest body and return its CRC32 as 4 LE bytes.
 
-    Layout: ``[4B opaque per-install][local IPv4 network order][0x40 00 00
-    00]``.  ``opaque`` is required: the 4 opaque bytes are stable for a given
-    install but differ between machines, so the caller must supply them
-    (:data:`LOGIN_TAIL_OPAQUE` / :data:`LOGIN_TAIL_OPAQUE_ALT`); only the
-    address is computed.
+    The manifest describes the current xlive.dll build; its ``CRC32`` field
+    is the standard CRC-32 of the DLL file, and the login request's install
+    signature carries exactly those 4 bytes, little-endian.
     """
-    if len(opaque) != 4:
-        raise ValueError("opaque must be exactly 4 bytes")
-    return opaque + ipaddress.IPv4Address(ip).packed + LOGIN_TAIL_SUFFIX
+    doc = json.loads(data.decode("utf-8-sig"))
+    crc = doc.get("CRC32")
+    if not isinstance(crc, int) or not 0 <= crc <= 0xFFFFFFFF:
+        raise ValueError(f"xlive manifest has no usable CRC32 field: {crc!r}")
+    return crc.to_bytes(4, "little")
+
+
+class XliveManifestError(RuntimeError):
+    """The Celeste xlive.json manifest could not be fetched or parsed.
+
+    Raised by :func:`fetch_xlive_crc32` (network or content failures) and
+    re-raised with an ``--xlive-crc`` hint by
+    :func:`aoeo_market.cli_args.resolve_xlive_crc`, which stops the live
+    commands instead of guessing with a stale captured CRC.
+    """
+
+
+def fetch_xlive_crc32(url: str = XLIVE_MANIFEST_URL, timeout: float = 10.0) -> bytes:
+    """Download the Celeste xlive.json manifest and return the CRC-32 of the
+    current xlive.dll as 4 little-endian bytes (the install-signature prefix).
+
+    Raises :class:`XliveManifestError` when the manifest cannot be fetched or
+    does not contain a usable ``CRC32`` field.  Callers that prefer a
+    captured value over a network round-trip can pass the 4 bytes directly.
+    """
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "aoeo-market"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return xlive_crc32_from_manifest(resp.read())
+    except (OSError, ValueError) as exc:
+        raise XliveManifestError(f"could not fetch or parse the xlive manifest {url}: {exc}") from exc
+
+
+def build_install_signature(ip: str, xlive_crc32: bytes) -> bytes:
+    """Build the 12-byte install-signature field for a given local IPv4 address.
+
+    Layout: ``[4B CRC-32 of the installed xlive.dll (LE)][local IPv4 network
+    order][0x40 00 00 00]``.  ``xlive_crc32`` is required: it must be the
+    CRC-32 of the xlive.dll the server currently ships, read from the
+    manifest by :func:`fetch_xlive_crc32`; only the address is computed.
+    """
+    if len(xlive_crc32) != 4:
+        raise ValueError("xlive_crc32 must be exactly 4 bytes")
+    return xlive_crc32 + ipaddress.IPv4Address(ip).packed + INSTALL_SIGNATURE_SUFFIX
 
 
 # 64-hex-char (32-byte) machine/install fingerprint.  Stable per install and
 # independent of the account: the 2026-08-13 and 2026-08-17 captures come from
 # the same machine but different accounts, and both send the value below; the
 # 2026-08-10 capture from another machine (same account as 2026-08-13) sends
-# the ALT value.  Like the tail opaque bytes, this is never defaulted: callers
+# the ALT value.
+#
+# The 2026-09-03 server maintenance changed the value: the updated official
+# client on machine B now sends ``1cb498f3…`` instead of the pre-upgrade
+# ``1257dc20…``, and the server rejects the pre-upgrade value (empty-session
+# rejection, verified live 2026-09-04).  Unlike the install-signature CRC
+# (which is derived from the live manifest), this is never defaulted: callers
 # pass the value for their machine explicitly.
-DEVICE_HASH = "1257dc20e79151e29b7b2476a06de0df3e3952d240f94af2a235e468d971eb49"
-DEVICE_HASH_ALT = "01b41e3557182b068efd169eb446b3eef517b209aad51b378ad88d2258035a18"
+DEVICE_HASH = "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"  # machine B (post-upgrade)
+DEVICE_HASH_PRE_UPGRADE = "1257dc20e79151e29b7b2476a06de0df3e3952d240f94af2a235e468d971eb49"  # machine B (rejected since 2026-09-03)
+DEVICE_HASH_ALT = "01b41e3557182b068efd169eb446b3eef517b209aad51b378ad88d2258035a18"  # machine A (2026-08-10)
 
 _HEADER = struct.Struct("<II")
 
@@ -109,11 +177,22 @@ class GameSession:
     extra: str = ""  # 4th response field; varies ('None' vs 'Summer')
 
 
+class LoginRejected(RuntimeError):
+    """The 4564 service answered the login packet but issued no session.
+
+    Raised when the packet-1 login response carries no session token — the
+    server's rejection frame for wrong credentials or a rejected device
+    fingerprint — after which the server closes the connection.  The 1510
+    login would fail with the same all-zero session, so the register step is
+    never sent.
+    """
+
+
 def _len_prefixed(data: bytes) -> bytes:
     return struct.pack("<I", len(data)) + data
 
 
-def _login_body(mail: str, password: str, local_ip: str, device_hash: str, opaque: bytes) -> bytes:
+def _login_body(mail: str, password: str, local_ip: str, device_hash: str, xlive_crc32: bytes) -> bytes:
     """The email+password block shared by the packet-1 and packet-7 logins."""
     return (
         b"\x00" * 40
@@ -121,7 +200,7 @@ def _login_body(mail: str, password: str, local_ip: str, device_hash: str, opaqu
         + struct.pack("<I", PROTOCOL_VERSION)
         + _len_prefixed(mail.encode("utf-8"))
         + _len_prefixed(password.encode("utf-8"))
-        + build_login_tail(local_ip, opaque)
+        + build_install_signature(local_ip, xlive_crc32)
         + device_hash.encode("ascii")
     )
 
@@ -131,17 +210,18 @@ def build_login_request(
     password: str,
     local_ip: str,
     device_hash: str,
-    opaque: bytes,
+    xlive_crc32: bytes,
 ) -> bytes:
     """Build the packet-1 login request body + header for the 4564 service.
 
-    ``device_hash`` and ``opaque`` are the per-install constants
-    (:data:`DEVICE_HASH` / :data:`LOGIN_TAIL_OPAQUE`) and are required: the
-    caller chooses which machine's values to replay.
+    ``device_hash`` is the per-install constant (:data:`DEVICE_HASH`) and
+    ``xlive_crc32`` is the little-endian CRC-32 of the installed xlive.dll
+    (:func:`fetch_xlive_crc32`); both are required, the caller chooses which
+    values to replay.
     """
     if len(device_hash) != 64:
         raise ValueError("device_hash must be 64 hexadecimal characters")
-    body = _login_body(mail, password, local_ip, device_hash, opaque)
+    body = _login_body(mail, password, local_ip, device_hash, xlive_crc32)
     return _HEADER.pack(1, 8 + len(body)) + body
 
 
@@ -158,19 +238,20 @@ def build_relogin_request(
     xuid: int,
     token: str,
     device_hash: str,
-    opaque: bytes,
+    xlive_crc32: bytes,
 ) -> bytes:
     """Build the packet-7 re-login body + header for the 4564 service.
 
     Observed in the 2026-08-10 and 2026-08-17 captures: after the initial
     login the game re-authenticates on the same connection with a packet that
     carries ``xuid + token`` first and then the same email/password block as
-    packet 1 (``0x01``, version 2018, lengths, tail, device hash).  The
-    server answers with a packet-7 response identical in layout to the
-    packet-1 response (with the 8 leading zero bytes replaced by the xuid).
+    packet 1 (``0x01``, version 2018, lengths, install signature, device
+    hash).  The server answers with a packet-7 response identical in layout
+    to the packet-1 response (with the 8 leading zero bytes replaced by the
+    xuid).
 
-    ``device_hash`` and ``opaque`` are the per-install constants and are
-    required, exactly as in :func:`build_login_request`.
+    ``device_hash`` and ``xlive_crc32`` are required, exactly as in
+    :func:`build_login_request`.
     """
     if len(device_hash) != 64:
         raise ValueError("device_hash must be 64 hexadecimal characters")
@@ -181,7 +262,7 @@ def build_relogin_request(
         + struct.pack("<I", PROTOCOL_VERSION)
         + _len_prefixed(mail.encode("utf-8"))
         + _len_prefixed(password.encode("utf-8"))
-        + build_login_tail(local_ip, opaque)
+        + build_install_signature(local_ip, xlive_crc32)
         + device_hash.encode("ascii")
     )
     return _HEADER.pack(7, 8 + len(body)) + body
@@ -200,6 +281,13 @@ def parse_login_response(body: bytes) -> GameSession:
     capture and ``"Summer"`` in both 2026-08-13/17 captures.  The external IP
     is the server's view of the client's public address and varies between
     sessions.
+
+    A *rejected* login (wrong credentials or rejected fingerprint) comes back
+    as a 67-byte body: ``[8B zeros][32B spaces][02 00][26B zeros]`` — the
+    success layout with the status byte zeroed and every session field empty
+    — followed by the server closing the connection.  It parses to a session
+    with ``xuid == 0`` and empty fields, which callers must treat as a
+    rejection (see :class:`LoginRejected`).
     """
     off = 8 + 32 + 2
     if off + 8 > len(body):
@@ -284,30 +372,37 @@ class CelesteNetworkClient:
         password: str,
         local_ip: str,
         device_hash: str,
-        opaque: bytes,
+        xlive_crc32: bytes,
     ) -> GameSession:
         """Authenticate with email + password and return the game session.
 
-        ``device_hash`` and ``opaque`` are the per-install constants
-        (:data:`DEVICE_HASH` / :data:`LOGIN_TAIL_OPAQUE`) and must be supplied
-        by the caller — no captured defaults are inferred.
+        ``device_hash`` is the per-install fingerprint (:data:`DEVICE_HASH`)
+        and ``xlive_crc32`` is the little-endian CRC-32 of the installed
+        xlive.dll (:func:`fetch_xlive_crc32`); both must be supplied by the
+        caller — no defaults are inferred.
 
         Performs the 4564 exchange: login request, login response, session
         register, then drains the (large) manifest reply. The manifest is not
         used by callers, so its drain is best-effort: the server may close the
-        connection right after the register (e.g. when it rejects the replayed
-        device fingerprint), but the session token has already been issued and
-        remains what the 1510 login needs. ``manifest_received`` records
-        whether the drain completed.
+        connection right after the register, but the session token has already
+        been issued and remains what the 1510 login needs. ``manifest_received``
+        records whether the drain completed.
+
+        A rejection (empty session in the packet-1 response — wrong credentials
+        or a rejected device fingerprint) raises :class:`LoginRejected` before
+        the register is sent; the server closes the connection on its own in
+        that case.
         """
         self.connect()
         try:
-            self._sock.sendall(build_login_request(mail, password, local_ip, device_hash, opaque))
+            self._sock.sendall(build_login_request(mail, password, local_ip, device_hash, xlive_crc32))
             pid, body = self._recv_packet()
             if pid != 1:
                 raise RuntimeError(f"unexpected login response packet id {pid}")
 
             session = parse_login_response(body)
+            if session.xuid == 0 or not session.token:
+                raise LoginRejected("server rejected the login (no session token issued) — wrong credentials or a rejected device fingerprint")
 
             self._sock.sendall(build_session_register(session.xuid, session.token))
             # packet 2: the ~135 KB game-file manifest; not used by callers.

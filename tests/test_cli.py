@@ -66,3 +66,61 @@ def test_init_db_command_creates_and_is_idempotent(tmp_path, capsys):
     # re-running is safe and reports the existing (empty) state
     assert main(["init-db", "--db", str(db)]) == 0
     assert "0 snapshots present" in capsys.readouterr().out
+
+
+def test_probe_reports_rejected_login(monkeypatch, capsys):
+    """A rejected 4564 login makes `probe` fail with a clear message."""
+    from types import SimpleNamespace
+
+    from aoeo_market import auth as auth_mod
+    from aoeo_market.cli import _probe
+
+    class _RejectingClient:
+        manifest_received = False
+
+        def __init__(self, *a, **k):
+            pass
+
+        def login(self, *a, **k):
+            raise auth_mod.LoginRejected("test rejection")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(auth_mod, "CelesteNetworkClient", _RejectingClient)
+    monkeypatch.setattr("aoeo_market.cli_args.resolve_xlive_crc", lambda value: bytes.fromhex("8ca16109"))
+    args = SimpleNamespace(
+        local_ip="192.168.0.17",
+        email="a@b.co",
+        password="pw",
+        host="51.91.169.108",
+        port=4564,
+        timeout=5.0,
+        game=False,
+        device_hash=auth_mod.DEVICE_HASH,
+        xlive_crc=None,
+    )
+    assert _probe(args) == 1
+    err = capsys.readouterr().err
+    assert "FAILED" in err
+    assert "rejected" in err
+
+
+def test_live_commands_stop_when_xlive_crc_unresolvable(monkeypatch, capsys):
+    """A manifest fetch failure stops the command (exit 2) instead of
+    guessing with a stale captured CRC."""
+    from types import SimpleNamespace
+
+    from aoeo_market import auth as auth_mod
+    from aoeo_market import cli as cli_mod
+    from aoeo_market.cli import _login_identity
+
+    def boom(value):
+        raise auth_mod.XliveManifestError("could not fetch or parse the xlive manifest: offline")
+
+    monkeypatch.setattr(cli_mod, "resolve_xlive_crc", boom)
+    args = SimpleNamespace(device_hash=auth_mod.DEVICE_HASH, xlive_crc=None)
+    assert _login_identity(args) == 2
+    err = capsys.readouterr().err
+    assert "error" in err
+    assert "xlive manifest" in err
