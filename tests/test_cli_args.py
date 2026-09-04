@@ -5,12 +5,11 @@ import argparse
 import pytest
 
 from aoeo_market import cli_args
-from aoeo_market.cli_args import add_login_args, detect_local_ip, resolve_local_ip
 
 
 def test_local_ip_arg_is_optional():
     p = argparse.ArgumentParser()
-    add_login_args(p)
+    cli_args.add_login_args(p)
     args = p.parse_args([])
     assert args.local_ip is None
     args = p.parse_args(["--local-ip", "10.1.2.3"])
@@ -20,18 +19,18 @@ def test_local_ip_arg_is_optional():
 def test_detect_local_ip_loopback():
     # The UDP connect trick against loopback is deterministic: no packets are
     # sent and the kernel reports 127.0.0.1 as the source address.
-    assert detect_local_ip("127.0.0.1", 9) == "127.0.0.1"
+    assert cli_args.detect_local_ip("127.0.0.1", 9) == "127.0.0.1"
 
 
 def test_resolve_local_ip_prefers_explicit_value():
     p = argparse.ArgumentParser()
-    assert resolve_local_ip(p, "10.1.2.3") == "10.1.2.3"
+    assert cli_args.resolve_local_ip(p, "10.1.2.3") == "10.1.2.3"
 
 
 def test_resolve_local_ip_uses_detection(monkeypatch):
     monkeypatch.setattr(cli_args, "detect_local_ip", lambda: "192.168.0.17")
     p = argparse.ArgumentParser()
-    assert resolve_local_ip(p, None) == "192.168.0.17"
+    assert cli_args.resolve_local_ip(p, None) == "192.168.0.17"
 
 
 def test_resolve_local_ip_reports_parser_error(monkeypatch):
@@ -41,13 +40,13 @@ def test_resolve_local_ip_reports_parser_error(monkeypatch):
     monkeypatch.setattr(cli_args, "detect_local_ip", no_route)
     p = argparse.ArgumentParser()
     with pytest.raises(SystemExit) as excinfo:
-        resolve_local_ip(p, None)
+        cli_args.resolve_local_ip(p, None)
     assert excinfo.value.code == 2
 
 
 def test_xlive_crc_arg_is_optional():
     p = argparse.ArgumentParser()
-    add_login_args(p)
+    cli_args.add_login_args(p)
     args = p.parse_args([])
     assert args.xlive_crc is None
     args = p.parse_args(["--xlive-crc", "8ca16109"])

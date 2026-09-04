@@ -150,8 +150,9 @@ def build_install_signature(ip: str, xlive_crc32: bytes) -> bytes:
 # 64-hex-char (32-byte) machine/install fingerprint.  Stable per install and
 # independent of the account: the 2026-08-13 and 2026-08-17 captures come from
 # the same machine but different accounts, and both send the value below; the
-# 2026-08-10 capture from another machine (same account as 2026-08-13) sends
-# the ALT value.
+# 2026-08-10 capture from another machine (same account as 2026-08-13) sends a
+# different value (kept with the other captured references in
+# ``tests/auth_ref.py``).
 #
 # The 2026-09-03 server maintenance changed the value: the updated official
 # client on machine B now sends ``1cb498f3…`` instead of the pre-upgrade
@@ -160,8 +161,6 @@ def build_install_signature(ip: str, xlive_crc32: bytes) -> bytes:
 # (which is derived from the live manifest), this is never defaulted: callers
 # pass the value for their machine explicitly.
 DEVICE_HASH = "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"  # machine B (post-upgrade)
-DEVICE_HASH_PRE_UPGRADE = "1257dc20e79151e29b7b2476a06de0df3e3952d240f94af2a235e468d971eb49"  # machine B (rejected since 2026-09-03)
-DEVICE_HASH_ALT = "01b41e3557182b068efd169eb446b3eef517b209aad51b378ad88d2258035a18"  # machine A (2026-08-10)
 
 _HEADER = struct.Struct("<II")
 
@@ -188,12 +187,23 @@ class LoginRejected(RuntimeError):
     """
 
 
+class ProtocolError(RuntimeError):
+    """Malformed bytes from the Celeste Network (4564) service.
+
+    Raised when a server packet does not fit the documented layout — a wrong
+    packet id, a bogus length field, or a login response body that cannot be
+    parsed.  Argument-validation failures (bad caller input) keep raising
+    :class:`ValueError`; this type is reserved for wire-format errors, so
+    callers can tell the two apart.
+    """
+
+
 def _len_prefixed(data: bytes) -> bytes:
     return struct.pack("<I", len(data)) + data
 
 
 def _login_body(mail: str, password: str, local_ip: str, device_hash: str, xlive_crc32: bytes) -> bytes:
-    """The email+password block shared by the packet-1 and packet-7 logins."""
+    """The email+password block of the packet-1 login request."""
     return (
         b"\x00" * 40
         + b"\x01"
@@ -231,43 +241,6 @@ def build_session_register(xuid: int, token: str) -> bytes:
     return _HEADER.pack(2, 8 + len(body)) + body
 
 
-def build_relogin_request(
-    mail: str,
-    password: str,
-    local_ip: str,
-    xuid: int,
-    token: str,
-    device_hash: str,
-    xlive_crc32: bytes,
-) -> bytes:
-    """Build the packet-7 re-login body + header for the 4564 service.
-
-    Observed in the 2026-08-10 and 2026-08-17 captures: after the initial
-    login the game re-authenticates on the same connection with a packet that
-    carries ``xuid + token`` first and then the same email/password block as
-    packet 1 (``0x01``, version 2018, lengths, install signature, device
-    hash).  The server answers with a packet-7 response identical in layout
-    to the packet-1 response (with the 8 leading zero bytes replaced by the
-    xuid).
-
-    ``device_hash`` and ``xlive_crc32`` are required, exactly as in
-    :func:`build_login_request`.
-    """
-    if len(device_hash) != 64:
-        raise ValueError("device_hash must be 64 hexadecimal characters")
-    body = (
-        struct.pack("<q", xuid)
-        + token.encode("ascii")
-        + b"\x01"
-        + struct.pack("<I", PROTOCOL_VERSION)
-        + _len_prefixed(mail.encode("utf-8"))
-        + _len_prefixed(password.encode("utf-8"))
-        + build_install_signature(local_ip, xlive_crc32)
-        + device_hash.encode("ascii")
-    )
-    return _HEADER.pack(7, 8 + len(body)) + body
-
-
 def parse_login_response(body: bytes) -> GameSession:
     """Parse the packet-1 login response body.
 
@@ -288,10 +261,12 @@ def parse_login_response(body: bytes) -> GameSession:
     — followed by the server closing the connection.  It parses to a session
     with ``xuid == 0`` and empty fields, which callers must treat as a
     rejection (see :class:`LoginRejected`).
+
+    Raises :class:`ProtocolError` when the body does not fit the layout.
     """
     off = 8 + 32 + 2
     if off + 8 > len(body):
-        raise ValueError("login response too short")
+        raise ProtocolError("login response too short")
     (xuid,) = struct.unpack("<q", body[off : off + 8])
     off += 8
 
@@ -305,7 +280,7 @@ def parse_login_response(body: bytes) -> GameSession:
         off += n
 
     if len(fields) < 2:
-        raise ValueError(f"unexpected login response fields: {fields!r}")
+        raise ProtocolError(f"unexpected login response fields: {fields!r}")
 
     return GameSession(
         xuid=xuid,
@@ -363,7 +338,7 @@ class CelesteNetworkClient:
         header = self._recv_exact(8)
         pid, total = _HEADER.unpack(header)
         if total < 8:
-            raise ValueError(f"invalid packet length {total}")
+            raise ProtocolError(f"invalid packet length {total}")
         return pid, self._recv_exact(total - 8)
 
     def login(
@@ -398,7 +373,7 @@ class CelesteNetworkClient:
             self._sock.sendall(build_login_request(mail, password, local_ip, device_hash, xlive_crc32))
             pid, body = self._recv_packet()
             if pid != 1:
-                raise RuntimeError(f"unexpected login response packet id {pid}")
+                raise ProtocolError(f"unexpected login response packet id {pid}")
 
             session = parse_login_response(body)
             if session.xuid == 0 or not session.token:
@@ -409,7 +384,7 @@ class CelesteNetworkClient:
             try:
                 self._recv_packet()
                 self.manifest_received = True
-            except (OSError, ValueError):
+            except (OSError, ProtocolError):
                 self.close()
 
             return session

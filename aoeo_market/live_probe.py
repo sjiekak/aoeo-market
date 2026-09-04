@@ -78,6 +78,9 @@ def probe(
         except auth.LoginRejected as exc:
             print(f"FAILED - 4564 login rejected: {exc}", file=sys.stderr)
             return 1
+        except auth.ProtocolError as exc:
+            print(f"FAILED - malformed 4564 reply: {exc}", file=sys.stderr)
+            return 1
         manifest_received = cn.manifest_received
     finally:
         cn.close()

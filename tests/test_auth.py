@@ -3,27 +3,19 @@
 import pytest
 
 from aoeo_market import auth
-from aoeo_market.auth import (
-    DEVICE_HASH,
+from tests.auth_ref import (
     DEVICE_HASH_ALT,
     DEVICE_HASH_PRE_UPGRADE,
-    INSTALL_SIGNATURE_SUFFIX,
-    PROTOCOL_VERSION,
-    CelesteNetworkClient,
-    LoginRejected,
-    XliveManifestError,
-    build_install_signature,
-    build_login_request,
+    XLIVE_CRC32,
+    XLIVE_CRC32_ALT,
+    XLIVE_CRC32_PRE_UPGRADE,
     build_relogin_request,
-    parse_login_response,
-    xlive_crc32_from_manifest,
 )
-from tests.auth_ref import XLIVE_CRC32, XLIVE_CRC32_ALT, XLIVE_CRC32_PRE_UPGRADE
 
 
 def test_build_login_request_rejects_bad_device_hash():
     with pytest.raises(ValueError):
-        build_login_request(
+        auth.build_login_request(
             "dummy@example.com",
             "dummy-password",
             "127.0.0.1",
@@ -51,13 +43,13 @@ def test_build_install_signature(ip: str, xlive_crc32: bytes, expected_payload: 
     constant 0x45 prefix or a per-machine opaque value — while the trailing
     group is constant across captures.
     """
-    assert build_install_signature(ip, xlive_crc32) == bytes.fromhex(expected_payload)
-    assert build_install_signature(ip, xlive_crc32)[8:] == INSTALL_SIGNATURE_SUFFIX
+    assert auth.build_install_signature(ip, xlive_crc32) == bytes.fromhex(expected_payload)
+    assert auth.build_install_signature(ip, xlive_crc32)[8:] == auth.INSTALL_SIGNATURE_SUFFIX
 
 
 def test_build_install_signature_rejects_bad_crc():
     with pytest.raises(ValueError):
-        build_install_signature("192.168.0.17", xlive_crc32=b"\x00\x00")
+        auth.build_install_signature("192.168.0.17", xlive_crc32=b"\x00\x00")
 
 
 def test_xlive_crc32_from_manifest():
@@ -67,18 +59,18 @@ def test_xlive_crc32_from_manifest():
     little-endian bytes are ``8c a1 61 09``, what the login request sends.
     """
     body = b'\xef\xbb\xbf{\r\n  "FileName": "xlive.dll",\r\n  "CRC32": 157393292\r\n}'
-    assert xlive_crc32_from_manifest(body) == bytes.fromhex("8ca16109")
+    assert auth.xlive_crc32_from_manifest(body) == bytes.fromhex("8ca16109")
 
 
 def test_xlive_crc32_from_manifest_rejects_bad_field():
     with pytest.raises(ValueError):
-        xlive_crc32_from_manifest(b'{"CRC32": "nope"}')
+        auth.xlive_crc32_from_manifest(b'{"CRC32": "nope"}')
     with pytest.raises(ValueError):
-        xlive_crc32_from_manifest(b'{"CRC32": -1}')
+        auth.xlive_crc32_from_manifest(b'{"CRC32": -1}')
     with pytest.raises(ValueError):
-        xlive_crc32_from_manifest(b'{"CRC32": 4294967296}')
+        auth.xlive_crc32_from_manifest(b'{"CRC32": 4294967296}')
     with pytest.raises(ValueError):
-        xlive_crc32_from_manifest(b'{"other": 1}')
+        auth.xlive_crc32_from_manifest(b'{"other": 1}')
 
 
 class _FakeResponse:
@@ -122,7 +114,7 @@ def test_fetch_xlive_crc32_wraps_network_failure(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", boom)
     monkeypatch.setattr(auth.urllib.request, "urlopen", boom)
-    with pytest.raises(XliveManifestError, match="offline"):
+    with pytest.raises(auth.XliveManifestError, match="offline"):
         auth.fetch_xlive_crc32(url="http://example.test/xlive.json")
 
 
@@ -132,17 +124,17 @@ def test_fetch_xlive_crc32_wraps_bad_content(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: _FakeResponse(b"not json"))
     monkeypatch.setattr(auth.urllib.request, "urlopen", lambda req, timeout: _FakeResponse(b"not json"))
-    with pytest.raises(XliveManifestError, match="xlive manifest"):
+    with pytest.raises(auth.XliveManifestError, match="xlive manifest"):
         auth.fetch_xlive_crc32(url="http://example.test/xlive.json")
 
 
 def test_login_request_layout_constants():
-    pkt = build_login_request("a@b.co", "pw", "192.168.0.17", device_hash=DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
+    pkt = auth.build_login_request("a@b.co", "pw", "192.168.0.17", device_hash=auth.DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
     # 40 zero bytes, 0x01, version 2018 LE
     assert pkt[8:48] == b"\x00" * 40
     assert pkt[48] == 0x01
-    assert pkt[49:53] == PROTOCOL_VERSION.to_bytes(4, "little")
-    assert PROTOCOL_VERSION == 2018
+    assert pkt[49:53] == auth.PROTOCOL_VERSION.to_bytes(4, "little")
+    assert auth.PROTOCOL_VERSION == 2018
     # email and password, length-prefixed
     assert pkt[53:57] == (6).to_bytes(4, "little")
     assert pkt[57:63] == b"a@b.co"
@@ -153,26 +145,26 @@ def test_login_request_layout_constants():
     assert pkt[69:73] == XLIVE_CRC32
     assert pkt[73:77] == bytes([192, 168, 0, 17])
     assert pkt[77:81] == b"\x40\x00\x00\x00"
-    assert pkt[81:145] == DEVICE_HASH.encode("ascii")
+    assert pkt[81:145] == auth.DEVICE_HASH.encode("ascii")
 
 
 def test_relogin_request_layout():
     xuid = 0x0123456789ABCDEF
     token = "T" * 32
-    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token, device_hash=DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
+    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token, device_hash=auth.DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
     assert pkt[0:8] == (7).to_bytes(4, "little") + (8 + 137).to_bytes(4, "little")
     body = pkt[8:]
     # xuid + token + 0x01 + version + email + password + signature + hash
     assert body[0:8] == xuid.to_bytes(8, "little")
     assert body[8:40] == token.encode("ascii")
     assert body[40] == 0x01
-    assert body[41:45] == PROTOCOL_VERSION.to_bytes(4, "little")
+    assert body[41:45] == auth.PROTOCOL_VERSION.to_bytes(4, "little")
     assert body[45:49] == (6).to_bytes(4, "little")
     assert body[49:55] == b"a@b.co"
     assert body[55:59] == (2).to_bytes(4, "little")
     assert body[59:61] == b"pw"
     assert body[61:73] == XLIVE_CRC32 + bytes([192, 168, 0, 17]) + b"\x40\x00\x00\x00"
-    assert body[73:137] == DEVICE_HASH.encode("ascii")
+    assert body[73:137] == auth.DEVICE_HASH.encode("ascii")
     assert len(body) == 137
 
 
@@ -180,28 +172,28 @@ def test_login_builders_require_identity_values():
     """The per-install device hash and the xlive CRC-32 are never defaulted —
     callers must pass them explicitly."""
     with pytest.raises(TypeError):
-        build_login_request("a@b.co", "pw", "192.168.0.17")
+        auth.build_login_request("a@b.co", "pw", "192.168.0.17")
     with pytest.raises(TypeError):
         build_relogin_request("a@b.co", "pw", "192.168.0.17", 1, "T" * 32)
     with pytest.raises(TypeError):
-        build_install_signature("192.168.0.17")
-    cn = CelesteNetworkClient()
+        auth.build_install_signature("192.168.0.17")
+    cn = auth.CelesteNetworkClient()
     with pytest.raises(TypeError):
         cn.login("a@b.co", "pw", "192.168.0.17")
 
 
 def test_device_hash_constants():
-    """The two known per-install hashes are 64 hex chars each."""
-    assert len(DEVICE_HASH) == 64
+    """The current and captured per-install hashes are 64 hex chars each."""
+    assert len(auth.DEVICE_HASH) == 64
     assert len(DEVICE_HASH_ALT) == 64
-    assert DEVICE_HASH != DEVICE_HASH_ALT
-    int(DEVICE_HASH, 16)
+    assert auth.DEVICE_HASH != DEVICE_HASH_ALT
+    int(auth.DEVICE_HASH, 16)
     int(DEVICE_HASH_ALT, 16)
 
 
 def test_post_upgrade_constants():
     """The post-upgrade machine-B values are the ones the server accepts."""
-    assert DEVICE_HASH == "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"
+    assert auth.DEVICE_HASH == "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"
     assert XLIVE_CRC32 == bytes.fromhex("8ca16109")
     assert len(DEVICE_HASH_PRE_UPGRADE) == 64
     assert XLIVE_CRC32_PRE_UPGRADE == bytes.fromhex("f69b991a")
@@ -215,11 +207,21 @@ REJECT_BODY = b"\x00" * 8 + b"\x20" * 32 + b"\x02\x00" + b"\x00" * 25
 
 def test_parse_login_response_decodes_rejection_as_empty_session():
     """The rejection frame parses to xuid=0 and empty fields."""
-    session = parse_login_response(REJECT_BODY)
+    session = auth.parse_login_response(REJECT_BODY)
     assert session.xuid == 0
     assert session.username == ""
     assert session.token == ""
     assert session.external_ip == ""
+
+
+def test_parse_login_response_raises_protocol_error():
+    """A body that does not fit the layout raises ProtocolError."""
+    with pytest.raises(auth.ProtocolError, match="too short"):
+        auth.parse_login_response(b"\x00" * 10)
+    # xuid area parses, but the field lengths are garbage
+    bogus = b"\x00" * 8 + b"\x20" * 32 + b"\x02\x0a" + b"\x00" * 8 + (0xFFFF).to_bytes(4, "little")
+    with pytest.raises(auth.ProtocolError, match="unexpected login response fields"):
+        auth.parse_login_response(bogus)
 
 
 class _FakeSock:
@@ -254,13 +256,13 @@ def test_login_raises_on_rejected_session(monkeypatch):
     reject = auth._HEADER.pack(1, 8 + len(REJECT_BODY)) + REJECT_BODY
     sock = _FakeSock([reject])
     monkeypatch.setattr(auth.socket, "create_connection", lambda *a, **k: sock)
-    cn = CelesteNetworkClient()
-    with pytest.raises(LoginRejected, match="no session token"):
+    cn = auth.CelesteNetworkClient()
+    with pytest.raises(auth.LoginRejected, match="no session token"):
         cn.login(
             "a@b.co",
             "pw",
             "192.168.0.17",
-            device_hash=DEVICE_HASH,
+            device_hash=auth.DEVICE_HASH,
             xlive_crc32=XLIVE_CRC32,
         )
     assert len(sock.sent) == 1  # only the login request; no register
@@ -285,12 +287,12 @@ def test_login_accepts_real_session(monkeypatch):
     manifest = auth._HEADER.pack(2, 8 + 4) + b"\x00" * 4
     sock = _FakeSock([ok, manifest])
     monkeypatch.setattr(auth.socket, "create_connection", lambda *a, **k: sock)
-    cn = CelesteNetworkClient()
+    cn = auth.CelesteNetworkClient()
     session = cn.login(
         "a@b.co",
         "pw",
         "192.168.0.17",
-        device_hash=DEVICE_HASH,
+        device_hash=auth.DEVICE_HASH,
         xlive_crc32=XLIVE_CRC32,
     )
     assert session.xuid == 12345
