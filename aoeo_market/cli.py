@@ -103,28 +103,24 @@ def _replay(args: argparse.Namespace) -> int:
     return 0
 
 
-def _login_identity(args: argparse.Namespace) -> tuple[str, bytes] | int:
+def _login_identity(args: argparse.Namespace) -> tuple[str, bytes]:
     """Validate the ``--device-hash`` / ``--xlive-crc`` pair for a live command.
 
-    Returns ``(device_hash, xlive_crc32)``, or the process exit code 2 after
-    reporting a malformed value.
+    Raises :class:`ValueError` for a malformed explicit value or
+    :class:`aoeo_market.auth.XliveManifestError` when the manifest fetch
+    fails; the live commands report the error and exit 2.
     """
-    try:
-        device_hash = parse_device_hash(args.device_hash)
-        xlive_crc32 = resolve_xlive_crc(args.xlive_crc)
-    except (ValueError, auth.XliveManifestError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    return device_hash, xlive_crc32
+    return parse_device_hash(args.device_hash), resolve_xlive_crc(args.xlive_crc)
 
 
 def _probe(args: argparse.Namespace) -> int:
     from .live_probe import probe
 
-    identity = _login_identity(args)
-    if isinstance(identity, int):
-        return identity
-    device_hash, xlive_crc32 = identity
+    try:
+        device_hash, xlive_crc32 = _login_identity(args)
+    except (ValueError, auth.XliveManifestError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     return probe(
         local_ip=args.local_ip,
         mail=args.email,
@@ -201,13 +197,13 @@ def _watch(mc: MarketClient, interval: float, store_target: str | None = None, q
 
 
 def _fetch(args: argparse.Namespace) -> int:
-    from .auth import LoginRejected
     from .live_probe import resolve_credentials
 
-    identity = _login_identity(args)
-    if isinstance(identity, int):
-        return identity
-    device_hash, xlive_crc32 = identity
+    try:
+        device_hash, xlive_crc32 = _login_identity(args)
+    except (ValueError, auth.XliveManifestError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     mail, password = resolve_credentials(args.email, args.password)
     mc = MarketClient(
@@ -233,8 +229,11 @@ def _fetch(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             mc.login(session)
-        except LoginRejected as exc:
+        except auth.LoginRejected as exc:
             print(f"error: login rejected: {exc}", file=sys.stderr)
+            return 1
+        except auth.ProtocolError as exc:
+            print(f"error: malformed server reply: {exc}", file=sys.stderr)
             return 1
         if args.watch:
             return _watch(mc, args.interval, args.store, args.quiet)
