@@ -59,6 +59,54 @@ function makeChart(canvasId, config) {
   charts[canvasId] = new Chart($(canvasId), config);
 }
 
+/* --- column sorting (shared by every sortable tab) ----------------------- */
+
+// Every sortable column cycles through three states when its header is
+// clicked: unsorted → min first (↑) → max first (↓) → unsorted again.
+// Clicking a different column starts it sorted min-first. The arrows are
+// rendered in CSS from the .sort-min/.sort-max classes, and the <th> carries
+// an aria-sort attribute for assistive tech.
+function wireColumnSort(tabId, { apply, order = null, dir = null }) {
+  const state = { order, dir };
+  const links = () => document.querySelectorAll(`#tab-${tabId} th a[data-order]`);
+  function sync() {
+    links().forEach((a) => {
+      const th = a.closest("th");
+      const active = a.dataset.order === state.order;
+      a.classList.toggle("active", active);
+      a.classList.remove("sort-min", "sort-max");
+      if (active) {
+        th.setAttribute("aria-sort", state.dir === "desc" ? "descending" : "ascending");
+        a.classList.add(state.dir === "desc" ? "sort-max" : "sort-min");
+      } else {
+        th.removeAttribute("aria-sort");
+      }
+    });
+  }
+  links().forEach((a) =>
+    a.addEventListener("click", () => {
+      const col = a.dataset.order;
+      if (state.order !== col) {
+        state.order = col;
+        state.dir = "asc"; // a new column starts sorted min-first
+      } else if (state.dir === "asc") {
+        state.dir = "desc";
+      } else {
+        state.order = null;
+        state.dir = null;
+      }
+      sync();
+      apply(state);
+    })
+  );
+  sync();
+  return state;
+}
+
+function orderQuery(order, dir) {
+  return order ? `?order=${encodeURIComponent(order)}&dir=${encodeURIComponent(dir)}` : "";
+}
+
 /* --- tabs ---------------------------------------------------------------- */
 
 function showTab(name) {
@@ -147,6 +195,30 @@ async function loadOverview() {
 
 let listingsCache = [];
 
+// One accessor per sortable column. Strings compare lexically and numbers
+// numerically; null/undefined sort last in "min" order (first in "max"),
+// matching the API's null placement.
+const LISTING_SORTS = {
+  item: (l) => l.item_id,
+  type: (l) => l.item_type,
+  level: (l) => l.item_level,
+  count: (l) => l.item_count,
+  price: (l) => l.unit_price,
+  expiry: (l) => l.seconds_till_expiry,
+  seller: (l) => String(l.seller_empire_id),
+};
+
+function cmpValues(a, b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b));
+}
+
+// The classic default view: cheapest per unit last (price, max-first).
+const listingSort = wireColumnSort("listings", { order: "price", dir: "desc", apply: renderListings });
+
 async function loadListings() {
   listingsCache = await api("/api/listings");
   const types = [...new Set(listingsCache.map((l) => l.item_type))].sort();
@@ -155,20 +227,13 @@ async function loadListings() {
   renderListings();
 }
 
-let lsDir = -1; // price desc default
 function renderListings() {
+  const { order, dir } = listingSort;
   const q = $("#ls-q").value.trim().toLowerCase();
   const type = $("#ls-type").value;
-  const sort = $("#ls-sort").value;
   const rows = listingsCache
     .filter((l) => (!type || l.item_type === type) && (!q || l.item_id.toLowerCase().includes(q) || (l.name && l.name.toLowerCase().includes(q))))
-    .sort((a, b) => {
-      let r = 0;
-      if (sort === "item" || sort === "type" || sort === "seller") r = String(a[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]).localeCompare(String(b[sort === "item" ? "item_id" : sort === "seller" ? "seller_empire_id" : "item_type"]));
-      else if (sort === "price") r = a.unit_price - b.unit_price;
-      else r = a[sort === "expiry" ? "seconds_till_expiry" : "item_" + sort] - b[sort === "expiry" ? "seconds_till_expiry" : "item_" + sort];
-      return r * lsDir;
-    });
+    .sort((a, b) => (order ? cmpValues(LISTING_SORTS[order](a), LISTING_SORTS[order](b)) * (dir === "desc" ? -1 : 1) : 0));
   $("#ls-count").textContent = `${rows.length} / ${listingsCache.length} listings`;
   $("#listings-body").innerHTML = rows
     .map(
@@ -187,13 +252,8 @@ function renderListings() {
 
 $("#ls-q").addEventListener("input", renderListings);
 $("#ls-type").addEventListener("change", renderListings);
-$("#ls-sort").addEventListener("change", () => (lsDir = -1, $("#ls-dir").textContent = "↓", renderListings()));
-$("#ls-dir").addEventListener("click", () => (lsDir = -lsDir, $("#ls-dir").textContent = lsDir < 0 ? "↓" : "↑", renderListings()));
 
 /* --- best sellers -------------------------------------------------------- */
-
-let bestOrder = "median_time";
-let bestDir = "asc";
 
 async function loadBestSellersChart() {
   const rows = await api("/api/best-sellers?order=median_time&dir=asc");
@@ -216,8 +276,7 @@ async function loadBestSellersChart() {
 }
 
 async function loadBestSellers() {
-  const rows = await api(`/api/best-sellers?order=${bestOrder}&dir=${bestDir}`);
-  document.querySelectorAll("#tab-best-sellers th a").forEach((a) => a.classList.toggle("active", a.dataset.order === bestOrder));
+  const rows = await api("/api/best-sellers" + orderQuery(bestSort.order, bestSort.dir));
   $("#best-body").innerHTML = rows
     .map(
       (r) => `<tr>
@@ -237,18 +296,10 @@ async function loadBestSellers() {
     .join("") || '<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as more data is collected</td></tr>';
 }
 
-document.querySelectorAll("#tab-best-sellers th a").forEach((a) =>
-  a.addEventListener("click", () => {
-    if (bestOrder === a.dataset.order) bestDir = bestDir === "asc" ? "desc" : "asc";
-    else (bestOrder = a.dataset.order), (bestDir = a.dataset.order === "median_time" || a.dataset.order === "min_time" ? "asc" : "desc");
-    loadBestSellers();
-  })
-);
+const bestSort = wireColumnSort("best-sellers", { order: "median_time", dir: "asc", apply: loadBestSellers });
 
 /* --- best value ---------------------------------------------------------- */
 
-let valueOrder = "value_ratio";
-let valueDir = "desc";
 const fmtRatio = (r) => (r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×");
 
 async function loadBestValueChart() {
@@ -272,8 +323,7 @@ async function loadBestValueChart() {
 }
 
 async function loadBestValue() {
-  const rows = await api(`/api/best-value?order=${valueOrder}&dir=${valueDir}`);
-  document.querySelectorAll("#tab-best-value th a").forEach((a) => a.classList.toggle("active", a.dataset.order === valueOrder));
+  const rows = await api("/api/best-value" + orderQuery(valueSort.order, valueSort.dir));
   $("#value-body").innerHTML = rows
     .map(
       (r) => `<tr>
@@ -292,22 +342,12 @@ async function loadBestValue() {
     .join("") || '<tr><td colspan="10" class="muted">no rarity-tagged items observed yet</td></tr>';
 }
 
-document.querySelectorAll("#tab-best-value th a").forEach((a) =>
-  a.addEventListener("click", () => {
-    if (valueOrder === a.dataset.order) valueDir = valueDir === "asc" ? "desc" : "asc";
-    else (valueOrder = a.dataset.order), (valueDir = "desc");
-    loadBestValue();
-  })
-);
+const valueSort = wireColumnSort("best-value", { order: "value_ratio", dir: "desc", apply: loadBestValue });
 
 /* --- not on sale --------------------------------------------------------- */
 
-let nosOrder = "median_unit_price";
-let nosDir = "desc";
-
 async function loadNotOnSale() {
-  const rows = await api(`/api/not-on-sale?order=${nosOrder}&dir=${nosDir}`);
-  document.querySelectorAll("#tab-not-on-sale th a").forEach((a) => a.classList.toggle("active", a.dataset.order === nosOrder));
+  const rows = await api("/api/not-on-sale" + orderQuery(nosSort.order, nosSort.dir));
   $("#nos-body").innerHTML = rows
     .map(
       (r) => `<tr>
@@ -325,13 +365,7 @@ async function loadNotOnSale() {
     .join("") || '<tr><td colspan="9" class="muted">nothing here — every known item is currently listed</td></tr>';
 }
 
-document.querySelectorAll("#tab-not-on-sale th a").forEach((a) =>
-  a.addEventListener("click", () => {
-    if (nosOrder === a.dataset.order) nosDir = nosDir === "desc" ? "asc" : "desc";
-    else (nosOrder = a.dataset.order), (nosDir = "desc");
-    loadNotOnSale();
-  })
-);
+const nosSort = wireColumnSort("not-on-sale", { order: "median_unit_price", dir: "desc", apply: loadNotOnSale });
 
 /* --- recently removed ---------------------------------------------------- */
 
