@@ -42,7 +42,17 @@ from ..market import Listing
 from . import openapi
 
 STATIC_DIR = Path(__file__).with_name("static")
-_STATIC_FILES = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
+# Extension -> content type for the generic static-file route under /static/.
+_STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".webp": "image/webp",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
 
 _JSON = "application/json; charset=utf-8"
 
@@ -86,12 +96,9 @@ class WebApp:
             if path == "/readyz":
                 return self._readyz()
             if path in ("/", "/index.html"):
-                return 200, _STATIC_FILES["index.html"], (STATIC_DIR / "index.html").read_bytes()
+                return 200, _STATIC_TYPES[".html"], (STATIC_DIR / "index.html").read_bytes()
             if path.startswith("/static/"):
-                name = path[len("/static/") :]
-                if name not in _STATIC_FILES:
-                    return self._error(404, f"no static file {name!r}")
-                return 200, _STATIC_FILES[name], (STATIC_DIR / name).read_bytes()
+                return self._static(path[len("/static/") :])
             if path == "/api/overview":
                 return self._json(store.market_overview(self._conn()))
             if path == "/api/listings":
@@ -206,6 +213,26 @@ class WebApp:
         except (duckdb.Error, OSError) as exc:
             return 503, _JSON, json.dumps({"status": "not ready", "database": f"error: {exc}"}).encode()
         return 200, _JSON, json.dumps({"status": "ready", "database": "ok", "snapshots": count}).encode()
+
+    def _static(self, name: str) -> tuple[int, str, bytes]:
+        """Serve one file from the static directory (safe whitelist by type).
+
+        Allows subdirectories (e.g. ``sprites/materials.webp``) but rejects
+        path traversal (``..``, absolute paths, backslashes) and resolves the
+        target so a symlink cannot escape ``STATIC_DIR``.
+        """
+        if not name or ".." in name or "\\" in name or name.startswith(("/", "\\")):
+            return self._error(404, f"no static file {name!r}")
+        target = (STATIC_DIR / name).resolve()
+        if STATIC_DIR.resolve() not in target.parents:
+            return self._error(404, f"no static file {name!r}")
+        ctype = _STATIC_TYPES.get(target.suffix.lower())
+        if ctype is None:
+            return self._error(404, f"no static file {name!r}")
+        try:
+            return 200, ctype, target.read_bytes()
+        except OSError:
+            return self._error(404, f"no static file {name!r}")
 
     def _conn(self) -> duckdb.DuckDBPyConnection:
         # Before the first snapshot, serve the empty state from an in-memory

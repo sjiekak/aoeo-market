@@ -31,7 +31,7 @@ from pathlib import Path
 import duckdb
 
 from .catalog import fields as catalog_fields
-from .catalog import name_of, rarity_of
+from .catalog import icon_fields, name_of, rarity_of
 from .market import Listing
 
 _SCHEMA_STATEMENTS = (
@@ -357,10 +357,14 @@ def _price_movers(conn: duckdb.DuckDBPyConnection, sid: int, prev_sid: int | Non
         if not med_before:
             continue
         pct = (med_now - med_before) / med_before * 100.0
+        rar = rarity_of(item_id)
         movers.append(
             {
                 "item_id": item_id,
                 "name": name_of(item_id),
+                **icon_fields(item_id),
+                "rarity": rar[1] if rar else None,
+                "rarity_rank": rar[0] if rar else 0,
                 "median_before": round(med_before),
                 "median_now": round(med_now),
                 "change_pct": round(pct, 1),
@@ -564,6 +568,7 @@ def items_not_on_sale(
             {
                 "item_id": r["item_id"],
                 "name": name_of(r["item_id"]),
+                **icon_fields(r["item_id"]),
                 "item_type": last["t"] if last else r["item_type"],
                 "item_level": last["lvl"] if last else r["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -656,6 +661,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
                 "transaction_id": g["transaction_id"],
                 "item_id": g["item_id"],
                 "name": name_of(g["item_id"]),
+                **icon_fields(g["item_id"]),
                 "item_type": g["item_type"],
                 "item_level": g["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -769,6 +775,7 @@ def best_sellers(
             {
                 "item_id": item_id,
                 "name": name_of(item_id),
+                **icon_fields(item_id),
                 "item_type": it["item_type"],
                 "item_level": it["item_level"],
                 "rarity": rar[1] if rar else None,
@@ -889,6 +896,7 @@ def best_value(
             {
                 "item_id": item_id,
                 "name": name_of(item_id),
+                **icon_fields(item_id),
                 "item_type": it["item_type"],
                 "item_level": it["item_level"],
                 "rarity": it["rarity"][1] if it["rarity"] else None,

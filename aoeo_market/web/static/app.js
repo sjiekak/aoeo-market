@@ -182,7 +182,7 @@ async function loadOverview() {
   $("#movers").innerHTML = o.top_movers
     .map(
       (m) => `<tr>
-        <td>${itemLink(m.item_id, m.name)}</td>
+        <td>${itemName(m)} ${rarityBadge(m.rarity)}</td>
         <td class="num">${fmtPrice(m.median_before)}</td>
         <td class="num">${fmtPrice(m.median_now)}</td>
         <td class="num ${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "+" : ""}${m.change_pct}%</td>
@@ -238,7 +238,7 @@ function renderListings() {
   $("#listings-body").innerHTML = rows
     .map(
       (l) => `<tr>
-        <td>${itemLink(l.item_id, l.name)} ${rarityBadge(l.rarity)}</td>
+        <td>${itemName(l)} ${rarityBadge(l.rarity)}</td>
         <td>${esc(l.item_type)}</td>
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
@@ -280,7 +280,7 @@ async function loadBestSellers() {
   $("#best-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -327,7 +327,7 @@ async function loadBestValue() {
   $("#value-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id, r.name)}</td>
+        <td>${itemName(r)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${rarityBadge(r.rarity)}</td>
@@ -351,7 +351,7 @@ async function loadNotOnSale() {
   $("#nos-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -376,7 +376,7 @@ async function loadRemoved() {
   $("#removed-body").innerHTML = rows
     .map(
       (r) => `<tr>
-        <td>${itemLink(r.item_id, r.name)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
         <td>${esc(r.item_type)}</td>
         <td>${esc(r.rarity || "—")}</td>
         <td class="num">${fmtPrice(r.item_price)}</td>
@@ -391,6 +391,56 @@ async function loadRemoved() {
 $("#removed-window").addEventListener("change", loadRemoved);
 
 /* --- item detail --------------------------------------------------------- */
+
+// Sprite clipping lives entirely in the browser, mirroring celeste-search:
+// the .webp sheet is a background-image and a background-position shows one
+// 64px cell. sprites.json maps kind -> icon -> position, and "@sheets" carries
+// each sheet's column/row count so the cell can be clipped at any pixel size
+// (background-size: cols*100% rows*100%).
+const SPRITE_SHEETS = { advisor: "advisors", blueprint: "blueprints", consumable: "consumables", design: "designs", item: "items", material: "materials" };
+let spritesIndex = null;
+let spritesPromise = null;
+function loadSprites() {
+  if (!spritesPromise) {
+    spritesPromise = fetch("/static/sprites.json")
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((idx) => (spritesIndex = idx || {}))
+      .catch(() => (spritesIndex = {}));
+  }
+  return spritesPromise;
+}
+
+function spriteIconStyle(kind, icon) {
+  const sheet = SPRITE_SHEETS[kind];
+  if (!sheet || !icon || !spritesIndex) return null;
+  const pos = (spritesIndex[kind] || {})[icon];
+  const meta = (spritesIndex["@sheets"] || {})[kind];
+  if (pos == null || !meta) return null;
+  return { url: `/static/sprites/${sheet}.webp`, pos, bgSize: `${meta.cols * 100}% ${meta.rows * 100}%` };
+}
+
+function itemIconHtml(kind, icon) {
+  const s = spriteIconStyle(kind, icon);
+  if (!s) return "";
+  return `<span class="item-icon-inline" style="background-image:url('${s.url}');background-position:${s.pos};background-size:${s.bgSize}" aria-hidden="true"></span>`;
+}
+
+function itemName(row) {
+  return itemIconHtml(row.kind, row.icon) + itemLink(row.item_id, row.name);
+}
+
+function renderItemImage(it) {
+  const img = $("#item-image");
+  const s = spriteIconStyle(it.kind, it.icon);
+  if (s) {
+    img.style.backgroundImage = `url("${s.url}")`;
+    img.style.backgroundPosition = s.pos;
+    img.style.backgroundSize = s.bgSize;
+    img.hidden = false;
+  } else {
+    img.hidden = true;
+  }
+}
 
 const HIST_BINS = [
   [0, "<100"], [100, "100–299"], [300, "300–999"], [1000, "1k–2.9k"], [3000, "3k–9.9k"],
@@ -408,6 +458,8 @@ async function loadItem(itemId) {
   $("#item-meta").innerHTML = meta;
   $("#item-desc").textContent = it.description || "";
   $("#item-desc").hidden = !it.description;
+  await loadSprites();
+  renderItemImage(it);
   const cur = it.current;
   $("#item-count").textContent = fmtInt(cur.length);
   const prices = cur.map((c) => c.unit_price).sort((a, b) => a - b);
@@ -518,6 +570,7 @@ function route() {
 window.addEventListener("hashchange", route);
 
 async function boot() {
+  await loadSprites(); // icon positions are needed by every table that renders a name
   const data = loadOverview().catch((e) => console.error(e));
   const listings = loadListings().catch((e) => console.error(e));
   await Promise.all([data, listings]);
