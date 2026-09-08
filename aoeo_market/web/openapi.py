@@ -256,7 +256,7 @@ def _best_value_row_schema() -> dict:
                 "min_unit_price": {"type": "number"},
                 "max_unit_price": {"type": "number"},
                 "current_median_unit_price": {"type": "integer", "nullable": True},
-                "current_min_unit_price": {"type": "number"},
+                "current_min_unit_price": {"type": "number", "nullable": True},
                 "active_count": {"type": "integer"},
                 "times_listed": {"type": "integer"},
                 "value_ratio": {"type": "number", "nullable": True, "description": "tier_reference_price / effective unit price."},

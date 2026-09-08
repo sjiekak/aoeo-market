@@ -208,6 +208,76 @@ def test_openapi_specs_are_structurally_valid():
     validate(openapi.build_spec(include_ingestion=True))  # the internal contract too
 
 
+def test_endpoint_payloads_validate_against_the_spec(tmp_path):
+    """The payloads the server actually returns conform to the schemas the
+    spec declares for them — the contract holds in the instance direction
+    too, not just structurally (openapi-schema-validator)."""
+    import json
+
+    from openapi_schema_validator import OAS30Validator
+    from openapi_schema_validator import validate as validate_instance
+
+    from aoeo_market.web import openapi
+
+    app = app_for(tmp_path)
+    spec = openapi.build_spec(include_ingestion=True)
+    schemas = spec["components"]["schemas"]
+
+    def deref(node):
+        """Expand every $ref against the component schemas.
+
+        The components are acyclic (rows compose StockItem/Listing/
+        ItemSummary), so a plain recursive expansion yields a self-contained
+        schema for the validator.
+        """
+        if isinstance(node, dict):
+            if len(node) == 1 and "$ref" in node:
+                name = node["$ref"].rsplit("/", 1)[-1]
+                return deref(schemas[name])
+            return {k: deref(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [deref(v) for v in node]
+        return node
+
+    def check(path, spec_path, query=None, status=200):
+        code, _, body = app.handle(path, query or {})
+        assert code == status, path
+        schema = spec["paths"][spec_path]["get"]["responses"][str(status)]["content"]["application/json"]["schema"]
+        validate_instance(json.loads(body), deref(schema), OAS30Validator)
+
+    # one payload per read endpoint, with the interesting variants
+    check("/healthz", "/healthz")
+    check("/readyz", "/readyz")
+    check("/api/overview", "/api/overview")
+    check("/api/listings", "/api/listings")
+    check("/api/listings", "/api/listings", {"type": ["Trait"], "q": ["sword"], "sort": ["price"], "dir": ["desc"]})
+    check("/api/item/Sword_U_III", "/api/item/{item_id}")
+    check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
+    check("/api/not-on-sale", "/api/not-on-sale")
+    check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
+    check("/api/best-value", "/api/best-value")
+    check("/api/best-value", "/api/best-value", {"include_unrated": ["1"]})
+    check("/api/recently-removed", "/api/recently-removed")
+    check("/api/item/nope", "/api/item/{item_id}", status=404)  # the Error schema
+
+    # the ingestion request body and its ack
+    payload = {"listings": [mk(1).to_dict(), mk(2).to_dict()], "captured_at": 1000.0}
+    request_schema = spec["paths"]["/api/snapshot"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    validate_instance(payload, deref(request_schema), OAS30Validator)
+    status, _, body = app.handle_post("/api/snapshot", json.dumps(payload).encode())
+    assert status == 201
+    ack_schema = spec["paths"]["/api/snapshot"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+    validate_instance(json.loads(body), deref(ack_schema), OAS30Validator)
+
+    # the empty-database payloads (latest: null, empty arrays)
+    empty = WebApp(str(tmp_path / "empty.db"))
+    for path, spec_path in (("/api/overview", "/api/overview"), ("/api/listings", "/api/listings")):
+        status, _, body = empty.handle(path)
+        assert status == 200, path
+        schema = spec["paths"][spec_path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        validate_instance(json.loads(body), deref(schema), OAS30Validator)
+
+
 def test_overview_endpoint(tmp_path):
     status, _, body = app_for(tmp_path).handle("/api/overview")
     assert status == 200

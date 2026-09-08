@@ -23,6 +23,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "openapi-schema-validator" },
     { name = "openapi-spec-validator" },
     { name = "pytest" },
     { name = "ruff" },
@@ -37,6 +38,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "openapi-schema-validator", specifier = ">=0.9.0" },
     { name = "openapi-spec-validator", specifier = ">=0.7.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.12.0" },
