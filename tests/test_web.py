@@ -137,6 +137,29 @@ def test_item_endpoint_and_404(tmp_path):
     assert "never observed" in body.decode()
 
 
+def test_static_files_served_by_extension(tmp_path, monkeypatch):
+    from aoeo_market.web import server as web_server
+
+    app = app_for(tmp_path)
+    # Point the static route at a scratch dir so the test does not depend on
+    # the (gitignored) sprite-sheet binaries.
+    monkeypatch.setattr(web_server, "STATIC_DIR", tmp_path)
+    (tmp_path / "sprites").mkdir()
+    (tmp_path / "sprites" / "materials.webp").write_bytes(b"WEBP")
+    (tmp_path / "index.json").write_bytes(b'{"material": {}}')
+
+    assert web_server._STATIC_TYPES[".webp"] == "image/webp"
+    status, ctype, body = app.handle("/static/index.json")
+    assert (status, ctype, body) == (200, "application/json; charset=utf-8", b'{"material": {}}')
+    status, ctype, body = app.handle("/static/sprites/materials.webp")
+    assert (status, ctype, body) == (200, "image/webp", b"WEBP")
+
+    # Unknown extension and path traversal are rejected.
+    assert app.handle("/static/nope.exe")[0] == 404
+    assert app.handle("/static/../secret.py")[0] == 404
+    assert app.handle("/static/sprites/missing.webp")[0] == 404
+
+
 def test_not_on_sale_endpoint(tmp_path):
     _, _, body = app_for(tmp_path).handle("/api/not-on-sale", {"order": ["median_unit_price"], "dir": ["desc"]})
     assert "Axe_R_I" in body.decode()

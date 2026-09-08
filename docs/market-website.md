@@ -107,7 +107,7 @@ The intended deployment puts both components in one namespace:
 | **Best value** | Items ranked by **value for their rarity**: how cheap an item trades relative to the typical price of its rarity tier (a 2× ratio means half the typical price). Orderable by ratio, price, "cheaper than %" percentile and more; a bar chart shows the ten best. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
-| **Item detail** | Full price history of one item — display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
+| **Item detail** | Full price history of one item — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
 
 Every sortable table shares one interaction: click a column header to sort
 min-first (↑), click it again for max-first (↓), and a third time to return
@@ -147,6 +147,12 @@ The API is the stable surface of the website; the frontend is a consumer of it.
   source records them — a **description**, **civilization**, advisor **age**
   and seasonal **event**.  These fields ride along on the listing and item
   rows, and the listings search matches the display name as well as the raw id.
+- **Item icons** — the item page shows the item's icon clipped in the browser
+  from a sprite sheet via CSS `background-position`, exactly as celeste-search
+  renders it (all sprite work is client-side).  The position index
+  (`aoeo_market/web/static/sprites.json`) is committed; the `.webp` sheets
+  under `aoeo_market/web/static/sprites/` are gitignored game art regenerated
+  by `scripts/build_sprites.py` from `ProjectCeleste/celeste-search`.
 - All timestamps are Unix seconds in UTC; the dashboard renders them in the
   browser's local timezone.
 - With one snapshot only, the "not on sale" and "recently removed" views are

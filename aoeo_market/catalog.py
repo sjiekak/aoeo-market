@@ -76,6 +76,23 @@ def name_of(item_id: str) -> str | None:
     return entry.get("name") if entry else None
 
 
+def icon_fields(item_id: str) -> dict:
+    """The ``kind`` and ``icon`` needed to clip the item's sprite icon.
+
+    Returns an empty dict when the catalog does not know the item, so callers
+    can merge it into a row without a lookup round-trip elsewhere.
+    """
+    entry = lookup(item_id)
+    if not entry:
+        return {}
+    out: dict = {}
+    if entry.get("kind") is not None:
+        out["kind"] = entry["kind"]
+    if entry.get("icon") is not None:
+        out["icon"] = entry["icon"]
+    return out
+
+
 def fields(item_id: str) -> dict:
     """The extra catalog-derived fields to merge into a listing/row dict.
 

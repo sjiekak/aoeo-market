@@ -1,6 +1,11 @@
 # Celeste
 ProjectCeleste*
 
+# Item-icon sprite sheets — binary game art copied from the gitignored
+# ProjectCeleste tree by scripts/build_sprites.py.  The position index
+# (aoeo_market/web/static/sprites.json) is committed; the .webp sheets are not.
+aoeo_market/web/static/sprites/
+
 # Too specific to local setup
 .python-version
 *.env
