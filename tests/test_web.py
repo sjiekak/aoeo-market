@@ -191,6 +191,23 @@ def test_composed_schemas_do_not_claim_additional_properties():
             assert "additionalProperties" not in target, f"{name} composes {part} which claims additionalProperties"
 
 
+def test_openapi_specs_are_structurally_valid():
+    """Both documents must pass an OpenAPI 3.0 schema validator.
+
+    The home-grown guards above cover this repo's conventions (named $ref
+    items, allOf/additionalProperties); this is the independent check that
+    the document itself is well-formed OpenAPI — parameter schemas, path
+    keys, response codes, nullable/enum tricks included.  ``validate`` raises
+    ``OpenAPIValidationError`` on the first structural problem.
+    """
+    from openapi_spec_validator import validate
+
+    from aoeo_market.web import openapi
+
+    validate(openapi.build_spec())  # the public document
+    validate(openapi.build_spec(include_ingestion=True))  # the internal contract too
+
+
 def test_overview_endpoint(tmp_path):
     status, _, body = app_for(tmp_path).handle("/api/overview")
     assert status == 200
