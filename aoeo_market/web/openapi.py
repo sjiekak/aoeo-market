@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 
 from .. import store
+from ..observer import RemovalReason
 
 VERSION = "0.1.0"
 
@@ -81,7 +82,12 @@ def _array_of(name: str) -> dict:
 
 
 def _stock_item_schema() -> dict:
-    """The sold item: the wire item fields every listing row carries."""
+    """The sold item: the wire item fields every listing row carries.
+
+    Non-strict on purpose: it is composed into ``Listing`` via ``allOf``, and
+    OpenAPI 3.0's ``additionalProperties`` cannot see a sibling schema's
+    properties, so a strict part would reject the listing fields.
+    """
     return _object(
         {
             "item_id": {
@@ -95,6 +101,7 @@ def _stock_item_schema() -> dict:
             "item_seed": {"type": "integer"},
         },
         ["item_id", "item_type", "item_level", "item_count", "item_price", "item_seed"],
+        strict=False,
     )
 
 
@@ -274,6 +281,16 @@ def _best_value_row_schema() -> dict:
     )
 
 
+def _removal_reason_schema() -> dict:
+    """Why a listing vanished, generated from the observer's classification.
+
+    ``EXPIRED``: vanished with less than a day left on its countdown (timed
+    out unsold).  ``REMOVED``: vanished with time to spare (sold or withdrawn
+    — indistinguishable from the outside).
+    """
+    return {"type": "string", "enum": [r.value for r in RemovalReason]}
+
+
 def _removed_listing_schema() -> dict:
     """One vanished listing row of ``GET /api/recently-removed``.
 
@@ -287,7 +304,7 @@ def _removed_listing_schema() -> dict:
         _object(
             {
                 "unit_price": {"type": "number", "description": "item_price / item_count, rounded to cents."},
-                "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
+                "reason": _ref("RemovalReason"),
                 "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
             },
             ["unit_price", "reason", "vanished_at"],
@@ -311,7 +328,7 @@ def _previous_listing_schema() -> dict:
                 "first_seen": {"type": "number", "description": "Unix seconds of the first snapshot the listing appears in."},
                 "last_seen": {"type": "number", "description": "Unix seconds of the last snapshot the listing appears in."},
                 "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
-                "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
+                "reason": _ref("RemovalReason"),
             },
             ["unit_price", "first_seen", "last_seen", "vanished_at", "reason"],
             strict=False,
@@ -467,6 +484,23 @@ def _snapshot_ack_schema() -> dict:
     )
 
 
+def _snapshot_payload_schema() -> dict:
+    """The ``POST /api/snapshot`` request body.
+
+    Non-strict: the server ignores unknown top-level fields, so the schema
+    documents the accepted payload instead of forbidding more than the server
+    does.
+    """
+    return _object(
+        {
+            "listings": {"type": "array", "items": _ref("Listing"), "description": "All active listings of the snapshot."},
+            "captured_at": {"type": "number", "description": "Unix seconds (UTC) the snapshot was taken; defaults to now."},
+        },
+        ["listings"],
+        strict=False,
+    )
+
+
 def _error_schema() -> dict:
     return _object({"error": {"type": "string"}}, ["error"])
 
@@ -488,22 +522,7 @@ def _ingestion_path() -> dict:
                 "description": "The only write endpoint: the fetcher posts here, so the web server is the single owner of the database. Unauthenticated — keep the service cluster-internal.",
                 "requestBody": {
                     "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["listings"],
-                                "properties": {
-                                    "listings": {
-                                        "type": "array",
-                                        "items": _ref("Listing"),
-                                        "description": "All active listings of the snapshot.",
-                                    },
-                                    "captured_at": {"type": "number", "description": "Unix seconds (UTC) the snapshot was taken; defaults to now."},
-                                },
-                            }
-                        }
-                    },
+                    "content": {"application/json": {"schema": _ref("SnapshotPayload")}},
                 },
                 "responses": {
                     "201": _json_response("snapshot stored", _ref("SnapshotAck")),
@@ -664,10 +683,12 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "PreviousListing": _previous_listing_schema(),
                 "PriceMover": _price_mover_schema(),
                 "RemovedListing": _removed_listing_schema(),
+                "RemovalReason": _removal_reason_schema(),
                 "ScatterPoint": _scatter_point_schema(),
                 "SeriesPoint": _series_point_schema(),
                 "SnapshotAck": _snapshot_ack_schema(),
                 "SnapshotInfo": _snapshot_info_schema(),
+                "SnapshotPayload": _snapshot_payload_schema(),
                 "Status": _status_schema(),
                 "StockItem": _stock_item_schema(),
                 "SupplyPoint": _supply_point_schema(),

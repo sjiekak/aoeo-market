@@ -139,6 +139,10 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
     detail_props, _ = resolve_schema(schemas["ItemDetail"], schemas)
     assert detail_props["current"]["items"] == {"$ref": "#/components/schemas/ListingRow"}
     assert detail_props["previous"]["items"] == {"$ref": "#/components/schemas/PreviousListing"}
+    # the removal classification mirrors the observer's enum
+    from aoeo_market.observer import RemovalReason
+
+    assert schemas["RemovalReason"]["enum"] == [r.value for r in RemovalReason]
 
 
 def test_every_array_items_is_a_named_schema():
@@ -169,6 +173,22 @@ def test_every_array_items_is_a_named_schema():
         name = items["$ref"].rsplit("/", 1)[-1]
         assert name in schemas, name
         assert node.get("type") != "object"
+
+
+def test_composed_schemas_do_not_claim_additional_properties():
+    """OpenAPI 3.0 evaluates ``additionalProperties`` per schema object, so a
+    strict part of an ``allOf`` would reject its siblings' fields.  Composed
+    schemas — and every schema they reference — must leave it unset."""
+    from aoeo_market.web import openapi
+
+    schemas = openapi.build_spec(include_ingestion=True)["components"]["schemas"]
+    for name, schema in schemas.items():
+        if "allOf" not in schema:
+            continue
+        assert "additionalProperties" not in schema, name
+        for part in schema["allOf"]:
+            target = schemas[part["$ref"].rsplit("/", 1)[-1]] if "$ref" in part else part
+            assert "additionalProperties" not in target, f"{name} composes {part} which claims additionalProperties"
 
 
 def test_overview_endpoint(tmp_path):

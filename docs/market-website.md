@@ -122,7 +122,7 @@ to the unsorted order. Clicking a different column starts it min-first.
 | `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |
 | `GET /api/listings?type=&q=&sort=&dir=` | active listings of the latest snapshot, each enriched with the catalog display name, kind, icon and authoritative rarity; `q` matches the item id and its display name |
-| `GET /api/item/<item_id>` | current listings + price history (`series`, `points`) of one item |
+| `GET /api/item/<item_id>` | the item's curated identity (name, kind, icon, rarity), its current listings and its previous (vanished) listings as full listing rows with the EXPIRED vs REMOVED classification, and the price history (`series`, `points`) |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
@@ -130,6 +130,13 @@ to the unsorted order. Clicking a different column starts it min-first.
 | `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}` |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
+
+Every payload is typed in the OpenAPI reference. The schemas compose two
+shared models: a `Listing` is a `StockItem` (id, type, level, count, price,
+seed) listed by a seller, and `ItemSummary` is the curated identity (name,
+rarity, kind, icon, …) attached to every row that names an item. Row schemas
+(`ListingRow`, `PreviousListing`, `RemovedListing`, the view rows) reuse those
+two models instead of repeating fields.
 
 ## Data notes
 
