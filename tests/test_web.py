@@ -129,6 +129,16 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
     # the stock item part carries exactly the item fields of the record
     stock_props, _ = resolve_schema(schemas["StockItem"], schemas)
     assert stock_props == schemas["StockItem"]["properties"]
+    # every listing-shaped row reuses the shared Listing schema
+    wire = set(mk(1).to_dict())
+    for name in ("ListingRow", "PreviousListing", "RemovedListing"):
+        row_props, row_required = resolve_schema(schemas[name], schemas)
+        assert wire <= set(row_props), f"{name} must reuse every Listing field"
+        assert wire <= set(row_required), f"{name} must require every Listing field"
+    # the item detail rows are the same listing models, not ad-hoc objects
+    detail_props, _ = resolve_schema(schemas["ItemDetail"], schemas)
+    assert detail_props["current"]["items"] == {"$ref": "#/components/schemas/ListingRow"}
+    assert detail_props["previous"]["items"] == {"$ref": "#/components/schemas/PreviousListing"}
 
 
 def test_every_array_items_is_a_named_schema():

@@ -395,9 +395,10 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     Prices are per unit (item_price / item_count) so listings of different
     stack sizes stay comparable.  Returns ``None`` when the item was never
     observed.  ``current`` is the item's active listings; ``previous`` lists
-    the vanished ones (first/last seen, vanished-at, and the EXPIRED vs
-    REMOVED classification), newest first.  The raw scatter points are
-    downsampled evenly to *max_points* so long histories stay chartable.
+    the vanished ones as full listing rows (all wire fields plus first/last
+    seen, vanished-at, and the EXPIRED vs REMOVED classification), newest
+    first.  The raw scatter points are downsampled evenly to *max_points* so
+    long histories stay chartable.
     """
     rows = _rows(
         conn,
@@ -466,14 +467,22 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         reason = "EXPIRED" if remaining < EXPIRY_WINDOW_SECONDS else "REMOVED"
         nxt = next_sid.get(row["snapshot_id"])
         vanished_at = snaps[nxt] if nxt is not None else (latest["captured_at"] if latest else None)
+        # Every vanished listing carries its full Listing fields (the wire
+        # record of aoeo_market.market.Listing) plus the observation span, so
+        # the row reuses the Listing schema of the OpenAPI contract.
         previous.append(
             {
                 "transaction_id": tx_id,
                 "seller_empire_id": row["seller_empire_id"],
-                "item_price": row["item_price"],
+                "buyer_character_id": row["buyer_character_id"],
+                "item_id": row["item_id"],
+                "item_type": row["item_type"],
+                "item_level": row["item_level"],
                 "item_count": row["item_count"],
-                "unit_price": round(row["item_price"] / max(row["item_count"], 1), 2),
+                "item_price": row["item_price"],
+                "item_seed": row["item_seed"],
                 "seconds_till_expiry": row["seconds_till_expiry"],
+                "unit_price": round(row["item_price"] / max(row["item_count"], 1), 2),
                 "first_seen": t["first_seen"],
                 "last_seen": row["t"],
                 "vanished_at": vanished_at,
@@ -656,18 +665,26 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
         remaining = g["seconds_till_expiry"]
         reason = "EXPIRED" if remaining < EXPIRY_WINDOW_SECONDS else "REMOVED"
         rar = rarity_of(g["item_id"])
+        # Each vanished row carries its full Listing fields plus the curated
+        # item summary and the observation span, so the row reuses the
+        # Listing + ItemSummary schemas of the OpenAPI contract.
         out.append(
             {
                 "transaction_id": g["transaction_id"],
+                "seller_empire_id": g["seller_empire_id"],
+                "buyer_character_id": g["buyer_character_id"],
                 "item_id": g["item_id"],
                 "name": name_of(g["item_id"]),
                 **icon_fields(g["item_id"]),
                 "item_type": g["item_type"],
                 "item_level": g["item_level"],
+                "item_count": g["item_count"],
+                "item_price": g["item_price"],
+                "item_seed": g["item_seed"],
+                "seconds_till_expiry": g["seconds_till_expiry"],
                 "rarity": rar[1] if rar else None,
                 "rarity_rank": rar[0] if rar else 0,
-                "item_price": g["item_price"],
-                "seller_empire_id": g["seller_empire_id"],
+                "unit_price": round(g["item_price"] / max(g["item_count"], 1), 2),
                 "reason": reason,
                 "vanished_at": g["vanished_at"],
             }

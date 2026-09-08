@@ -275,66 +275,47 @@ def _best_value_row_schema() -> dict:
 
 
 def _removed_listing_schema() -> dict:
-    """One vanished listing row of ``GET /api/recently-removed``."""
-    return _object(
-        {
-            "transaction_id": {"type": "integer", "format": "int64"},
-            "item_id": {"type": "string"},
-            "name": {"type": "string", "nullable": True},
-            "kind": {"type": "string"},
-            "icon": {"type": "string"},
-            "item_type": {"type": "string"},
-            "item_level": {"type": "integer"},
-            "rarity": {"type": "string", "nullable": True},
-            "rarity_rank": {"type": "integer"},
-            "item_price": {"type": "integer"},
-            "seller_empire_id": {"type": "integer", "format": "int64"},
-            "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
-            "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
-        },
-        [
-            "transaction_id",
-            "item_id",
-            "name",
-            "item_type",
-            "item_level",
-            "rarity",
-            "rarity_rank",
-            "item_price",
-            "seller_empire_id",
-            "reason",
-            "vanished_at",
-        ],
+    """One vanished listing row of ``GET /api/recently-removed``.
+
+    A full ``Listing`` enriched with its curated ``ItemSummary`` plus the
+    observation span; the payload carries every listing field even where the
+    view only displays a few.
+    """
+    return _composed(
+        _ref("Listing"),
+        _ref("ItemSummary"),
+        _object(
+            {
+                "unit_price": {"type": "number", "description": "item_price / item_count, rounded to cents."},
+                "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
+                "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
+            },
+            ["unit_price", "reason", "vanished_at"],
+            strict=False,
+        ),
     )
 
 
 def _previous_listing_schema() -> dict:
-    """One vanished listing of ``GET /api/item/{item_id}``."""
-    return _object(
-        {
-            "transaction_id": {"type": "integer", "format": "int64"},
-            "seller_empire_id": {"type": "integer", "format": "int64"},
-            "item_price": {"type": "integer"},
-            "item_count": {"type": "integer"},
-            "unit_price": {"type": "number"},
-            "seconds_till_expiry": {"type": "integer"},
-            "first_seen": {"type": "number", "description": "Unix seconds of the first snapshot the listing appears in."},
-            "last_seen": {"type": "number", "description": "Unix seconds of the last snapshot the listing appears in."},
-            "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
-            "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
-        },
-        [
-            "transaction_id",
-            "seller_empire_id",
-            "item_price",
-            "item_count",
-            "unit_price",
-            "seconds_till_expiry",
-            "first_seen",
-            "last_seen",
-            "vanished_at",
-            "reason",
-        ],
+    """One vanished listing of ``GET /api/item/{item_id}``.
+
+    A full ``Listing`` plus the observation span; the item identity is
+    redundant with the enclosing item detail but keeps the row on the shared
+    listing model.
+    """
+    return _composed(
+        _ref("Listing"),
+        _object(
+            {
+                "unit_price": {"type": "number", "description": "item_price / item_count, rounded to cents."},
+                "first_seen": {"type": "number", "description": "Unix seconds of the first snapshot the listing appears in."},
+                "last_seen": {"type": "number", "description": "Unix seconds of the last snapshot the listing appears in."},
+                "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
+                "reason": {"type": "string", "enum": ["EXPIRED", "REMOVED"]},
+            },
+            ["unit_price", "first_seen", "last_seen", "vanished_at", "reason"],
+            strict=False,
+        ),
     )
 
 
