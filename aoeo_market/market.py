@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 # The server browse only ever returns active listings, for which BuyerCharacterId
 # is this sentinel. A non-sentinel value would indicate a completed sale record.
@@ -84,19 +84,12 @@ class Listing:
         return self.buyer_character_id == NO_BUYER
 
     def to_dict(self) -> dict[str, int | str]:
-        """The JSON payload shape the snapshot API accepts."""
-        return {
-            "transaction_id": self.transaction_id,
-            "seller_empire_id": self.seller_empire_id,
-            "buyer_character_id": self.buyer_character_id,
-            "item_id": self.item_id,
-            "item_type": self.item_type,
-            "item_level": self.item_level,
-            "item_count": self.item_count,
-            "item_price": self.item_price,
-            "item_seed": self.item_seed,
-            "seconds_till_expiry": self.seconds_till_expiry,
-        }
+        """The JSON payload shape the snapshot API accepts.
+
+        The dataclass fields *are* the wire record, so the payload is just
+        the record serialized — no hand-picked subset to drift.
+        """
+        return asdict(self)
 
 
 def summarize(listings: list[Listing]) -> dict:
