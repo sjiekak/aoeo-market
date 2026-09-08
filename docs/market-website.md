@@ -109,6 +109,10 @@ The intended deployment puts both components in one namespace:
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
 | **Item detail** | Full price history of one item — display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
 
+Every sortable table shares one interaction: click a column header to sort
+min-first (↑), click it again for max-first (↓), and a third time to return
+to the unsorted order. Clicking a different column starts it min-first.
+
 ## JSON API
 
 | Endpoint | Returns |
