@@ -24,6 +24,26 @@ def app_for(tmp_path) -> WebApp:
     return WebApp(str(db))
 
 
+def resolve_schema(schema: dict, schemas: dict) -> tuple[dict, list[str]]:
+    """Flatten an ``allOf``-composed schema into its effective properties.
+
+    Returns ``(properties, required)`` with every ``$ref`` part merged in, so
+    tests can compare a composed schema against a concrete payload shape.
+    """
+    props: dict = {}
+    required: list[str] = []
+    for part in schema.get("allOf", []):
+        if "$ref" in part:
+            name = part["$ref"].rsplit("/", 1)[-1]
+            part = schemas[name]
+        p, r = resolve_schema(part, schemas)
+        props.update(p)
+        required.extend(r)
+    props.update(schema.get("properties", {}))
+    required.extend(schema.get("required", []))
+    return props, required
+
+
 def test_index_and_static_files(tmp_path):
     app = app_for(tmp_path)
     status, ctype, body = app.handle("/healthz")
@@ -100,8 +120,45 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
     # the internal spec keeps the ingestion contract in sync with the code
     full = openapi.build_spec(include_ingestion=True)
     assert "post" in full["paths"]["/api/snapshot"]
-    # the Listing schema must mirror the payload contract exactly
-    assert set(full["components"]["schemas"]["Listing"]["properties"]) == set(mk(1).to_dict())
+    # the Listing schema (StockItem + marketplace fields via allOf) must
+    # mirror the wire payload contract exactly
+    schemas = full["components"]["schemas"]
+    listing_props, listing_required = resolve_schema(schemas["Listing"], schemas)
+    assert set(listing_props) == set(mk(1).to_dict())
+    assert set(listing_required) == set(mk(1).to_dict())
+    # the stock item part carries exactly the item fields of the record
+    stock_props, _ = resolve_schema(schemas["StockItem"], schemas)
+    assert stock_props == schemas["StockItem"]["properties"]
+
+
+def test_every_array_items_is_a_named_schema():
+    """Every array in the spec (requests and responses) types its items with
+    a ``$ref`` to a component schema — inline ``{"type": "object"}`` items
+    were the old loose contract."""
+    from aoeo_market.web import openapi
+
+    spec = openapi.build_spec(include_ingestion=True)
+    arrays: list[dict] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "array":
+                arrays.append(node)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(spec)
+    assert arrays, "the spec should contain typed arrays"
+    schemas = spec["components"]["schemas"]
+    for node in arrays:
+        items = node["items"]
+        assert isinstance(items, dict) and "$ref" in items, f"array items must be a named $ref, got {items!r}"
+        name = items["$ref"].rsplit("/", 1)[-1]
+        assert name in schemas, name
+        assert node.get("type") != "object"
 
 
 def test_overview_endpoint(tmp_path):
