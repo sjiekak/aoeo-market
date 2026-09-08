@@ -102,9 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     static = Path(args.static)
     static.mkdir(parents=True, exist_ok=True)
     document = {"@sheets": {kind: _grid(rules) for kind, rules in index.items()}, **index}
-    static.joinpath("sprites.json").write_text(
-        _json_dumps(document), encoding="utf-8"
-    )
+    static.joinpath("sprites.json").write_text(_json_dumps(document), encoding="utf-8")
 
     sprites = static / "sprites"
     sprites.mkdir(parents=True, exist_ok=True)

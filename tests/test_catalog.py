@@ -72,7 +72,7 @@ def test_sprite_index_covers_every_catalog_icon():
     # The front end scales each sheet with background-size: cols*100% rows*100%;
     # the grid metadata must be present for every kind that has icons.
     sheets = sprites.get("@sheets", {})
-    for kind, icons in sprites.items():
+    for kind in sprites:
         if kind == "@sheets":
             continue
         assert kind in sheets, f"missing @sheets grid for {kind!r}"

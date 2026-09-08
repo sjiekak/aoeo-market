@@ -31,8 +31,7 @@ from pathlib import Path
 import duckdb
 
 from .catalog import fields as catalog_fields
-from .catalog import icon_fields
-from .catalog import name_of, rarity_of
+from .catalog import icon_fields, name_of, rarity_of
 from .market import Listing
 
 _SCHEMA_STATEMENTS = (
