@@ -24,6 +24,26 @@ def app_for(tmp_path) -> WebApp:
     return WebApp(str(db))
 
 
+def resolve_schema(schema: dict, schemas: dict) -> tuple[dict, list[str]]:
+    """Flatten an ``allOf``-composed schema into its effective properties.
+
+    Returns ``(properties, required)`` with every ``$ref`` part merged in, so
+    tests can compare a composed schema against a concrete payload shape.
+    """
+    props: dict = {}
+    required: list[str] = []
+    for part in schema.get("allOf", []):
+        if "$ref" in part:
+            name = part["$ref"].rsplit("/", 1)[-1]
+            part = schemas[name]
+        p, r = resolve_schema(part, schemas)
+        props.update(p)
+        required.extend(r)
+    props.update(schema.get("properties", {}))
+    required.extend(schema.get("required", []))
+    return props, required
+
+
 def test_index_and_static_files(tmp_path):
     app = app_for(tmp_path)
     status, ctype, body = app.handle("/healthz")
@@ -100,8 +120,162 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
     # the internal spec keeps the ingestion contract in sync with the code
     full = openapi.build_spec(include_ingestion=True)
     assert "post" in full["paths"]["/api/snapshot"]
-    # the Listing schema must mirror the payload contract exactly
-    assert set(full["components"]["schemas"]["Listing"]["properties"]) == set(mk(1).to_dict())
+    # the Listing schema (StockItem + marketplace fields via allOf) must
+    # mirror the wire payload contract exactly
+    schemas = full["components"]["schemas"]
+    listing_props, listing_required = resolve_schema(schemas["Listing"], schemas)
+    assert set(listing_props) == set(mk(1).to_dict())
+    assert set(listing_required) == set(mk(1).to_dict())
+    # the stock item part carries exactly the item fields of the record
+    stock_props, _ = resolve_schema(schemas["StockItem"], schemas)
+    assert stock_props == schemas["StockItem"]["properties"]
+    # every listing-shaped row reuses the shared Listing schema
+    wire = set(mk(1).to_dict())
+    for name in ("ListingRow", "PreviousListing", "RemovedListing"):
+        row_props, row_required = resolve_schema(schemas[name], schemas)
+        assert wire <= set(row_props), f"{name} must reuse every Listing field"
+        assert wire <= set(row_required), f"{name} must require every Listing field"
+    # the item detail rows are the same listing models, not ad-hoc objects
+    detail_props, _ = resolve_schema(schemas["ItemDetail"], schemas)
+    assert detail_props["current"]["items"] == {"$ref": "#/components/schemas/ListingRow"}
+    assert detail_props["previous"]["items"] == {"$ref": "#/components/schemas/PreviousListing"}
+    # the removal classification mirrors the observer's enum
+    from aoeo_market.observer import RemovalReason
+
+    assert schemas["RemovalReason"]["enum"] == [r.value for r in RemovalReason]
+
+
+def test_every_array_items_is_a_named_schema():
+    """Every array in the spec (requests and responses) types its items with
+    a ``$ref`` to a component schema — inline ``{"type": "object"}`` items
+    were the old loose contract."""
+    from aoeo_market.web import openapi
+
+    spec = openapi.build_spec(include_ingestion=True)
+    arrays: list[dict] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "array":
+                arrays.append(node)
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(spec)
+    assert arrays, "the spec should contain typed arrays"
+    schemas = spec["components"]["schemas"]
+    for node in arrays:
+        items = node["items"]
+        assert isinstance(items, dict) and "$ref" in items, f"array items must be a named $ref, got {items!r}"
+        name = items["$ref"].rsplit("/", 1)[-1]
+        assert name in schemas, name
+        assert node.get("type") != "object"
+
+
+def test_composed_schemas_do_not_claim_additional_properties():
+    """OpenAPI 3.0 evaluates ``additionalProperties`` per schema object, so a
+    strict part of an ``allOf`` would reject its siblings' fields.  Composed
+    schemas — and every schema they reference — must leave it unset."""
+    from aoeo_market.web import openapi
+
+    schemas = openapi.build_spec(include_ingestion=True)["components"]["schemas"]
+    for name, schema in schemas.items():
+        if "allOf" not in schema:
+            continue
+        assert "additionalProperties" not in schema, name
+        for part in schema["allOf"]:
+            target = schemas[part["$ref"].rsplit("/", 1)[-1]] if "$ref" in part else part
+            assert "additionalProperties" not in target, f"{name} composes {part} which claims additionalProperties"
+
+
+def test_openapi_specs_are_structurally_valid():
+    """Both documents must pass an OpenAPI 3.0 schema validator.
+
+    The home-grown guards above cover this repo's conventions (named $ref
+    items, allOf/additionalProperties); this is the independent check that
+    the document itself is well-formed OpenAPI — parameter schemas, path
+    keys, response codes, nullable/enum tricks included.  ``validate`` raises
+    ``OpenAPIValidationError`` on the first structural problem.
+    """
+    from openapi_spec_validator import validate
+
+    from aoeo_market.web import openapi
+
+    validate(openapi.build_spec())  # the public document
+    validate(openapi.build_spec(include_ingestion=True))  # the internal contract too
+
+
+def test_endpoint_payloads_validate_against_the_spec(tmp_path):
+    """The payloads the server actually returns conform to the schemas the
+    spec declares for them — the contract holds in the instance direction
+    too, not just structurally (openapi-schema-validator)."""
+    import json
+
+    from openapi_schema_validator import OAS30Validator
+    from openapi_schema_validator import validate as validate_instance
+
+    from aoeo_market.web import openapi
+
+    app = app_for(tmp_path)
+    spec = openapi.build_spec(include_ingestion=True)
+    schemas = spec["components"]["schemas"]
+
+    def deref(node):
+        """Expand every $ref against the component schemas.
+
+        The components are acyclic (rows compose StockItem/Listing/
+        ItemSummary), so a plain recursive expansion yields a self-contained
+        schema for the validator.
+        """
+        if isinstance(node, dict):
+            if len(node) == 1 and "$ref" in node:
+                name = node["$ref"].rsplit("/", 1)[-1]
+                return deref(schemas[name])
+            return {k: deref(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [deref(v) for v in node]
+        return node
+
+    def check(path, spec_path, query=None, status=200):
+        code, _, body = app.handle(path, query or {})
+        assert code == status, path
+        schema = spec["paths"][spec_path]["get"]["responses"][str(status)]["content"]["application/json"]["schema"]
+        validate_instance(json.loads(body), deref(schema), OAS30Validator)
+
+    # one payload per read endpoint, with the interesting variants
+    check("/healthz", "/healthz")
+    check("/readyz", "/readyz")
+    check("/api/overview", "/api/overview")
+    check("/api/listings", "/api/listings")
+    check("/api/listings", "/api/listings", {"type": ["Trait"], "q": ["sword"], "sort": ["price"], "dir": ["desc"]})
+    check("/api/item/Sword_U_III", "/api/item/{item_id}")
+    check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
+    check("/api/not-on-sale", "/api/not-on-sale")
+    check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
+    check("/api/best-value", "/api/best-value")
+    check("/api/best-value", "/api/best-value", {"include_unrated": ["1"]})
+    check("/api/recently-removed", "/api/recently-removed")
+    check("/api/item/nope", "/api/item/{item_id}", status=404)  # the Error schema
+
+    # the ingestion request body and its ack
+    payload = {"listings": [mk(1).to_dict(), mk(2).to_dict()], "captured_at": 1000.0}
+    request_schema = spec["paths"]["/api/snapshot"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    validate_instance(payload, deref(request_schema), OAS30Validator)
+    status, _, body = app.handle_post("/api/snapshot", json.dumps(payload).encode())
+    assert status == 201
+    ack_schema = spec["paths"]["/api/snapshot"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]
+    validate_instance(json.loads(body), deref(ack_schema), OAS30Validator)
+
+    # the empty-database payloads (latest: null, empty arrays)
+    empty = WebApp(str(tmp_path / "empty.db"))
+    for path, spec_path in (("/api/overview", "/api/overview"), ("/api/listings", "/api/listings")):
+        status, _, body = empty.handle(path)
+        assert status == 200, path
+        schema = spec["paths"][spec_path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        validate_instance(json.loads(body), deref(schema), OAS30Validator)
 
 
 def test_overview_endpoint(tmp_path):
