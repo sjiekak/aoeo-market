@@ -78,6 +78,9 @@ h2 { font-size: 16px; margin: 0 0 12px; }
 
 .chart-card { height: 380px; position: relative; }
 .chart-card canvas { max-height: 310px; }
+.chart-card h2 button.link { font-size: 12px; margin: 0 0 0 4px; vertical-align: baseline; }
+#chart-supply { cursor: grab; }
+#chart-supply:active { cursor: grabbing; }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }

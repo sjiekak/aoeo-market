@@ -18,6 +18,10 @@ Chart.defaults.color = "#cbd5e1";
 Chart.defaults.borderColor = "rgba(148,163,184,0.15)";
 Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
 
+// chartjs-plugin-zoom registers itself when its script loads; the guard keeps
+// the dashboard working (without zoom) if that CDN file is unreachable.
+if (window.ChartZoom) Chart.register(ChartZoom);
+
 async function api(path) {
   const r = await fetch(path);
   const body = await r.json().catch(() => ({}));
@@ -124,6 +128,38 @@ document.querySelectorAll("nav button").forEach((b) =>
 
 /* --- overview ------------------------------------------------------------ */
 
+// While the supply chart's time axis is zoomed or panned, rescale the y axis
+// to the points visible in the current window (with ~10% headroom) so small
+// variations don't flatten against the full-history range. On reset the
+// default 0-based auto scale returns.
+function fitSupplyY(chart) {
+  const y = chart.scales.y;
+  const { min: x0, max: x1 } = chart.scales.x;
+  if (!chart.isZoomedOrPanned() || x0 == null || x1 == null) {
+    if (y.options.min !== undefined || y.options.max !== undefined) {
+      delete y.options.min;
+      delete y.options.max;
+      chart.update("none");
+    }
+    return;
+  }
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const ds of chart.data.datasets) {
+    for (const p of ds.data) {
+      if (p.x >= x0 && p.x <= x1) {
+        if (p.y < lo) lo = p.y;
+        if (p.y > hi) hi = p.y;
+      }
+    }
+  }
+  if (!Number.isFinite(lo)) return; // window with no points — leave as is
+  const pad = Math.max((hi - lo) * 0.1, hi * 0.02, 1);
+  y.options.min = Math.max(0, lo - pad);
+  y.options.max = hi + pad;
+  chart.update("none");
+}
+
 async function loadOverview() {
   const o = await api("/api/overview");
   $("#empty-banner").hidden = o.latest !== null;
@@ -133,13 +169,15 @@ async function loadOverview() {
   $("#kpi-last").textContent = o.latest ? fmtTime(o.latest.captured_at) : "—";
   $("#snapshot-info").textContent = o.latest ? `snapshot ${fmtTime(o.latest.captured_at)} · ${fmtInt(o.active_listings)} listings` : "no data yet";
 
+  // X axis is epoch-milliseconds on a linear scale so the time axis can be
+  // panned (drag) and zoomed (scroll wheel / pinch). The zoom plugin clamps
+  // the window to the data range, so you can never zoom out past the edges.
   makeChart("#chart-supply", {
     type: "line",
     data: {
-      labels: o.supply_history.map((s) => fmtTime(s.t)),
       datasets: [{
         label: "active listings",
-        data: o.supply_history.map((s) => s.count),
+        data: o.supply_history.map((s) => ({ x: s.t * 1000, y: s.count })),
         borderColor: "#fbbf24",
         backgroundColor: "rgba(251,191,36,0.08)",
         fill: true,
@@ -147,8 +185,39 @@ async function loadOverview() {
         pointRadius: 0,
       }],
     },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+    options: {
+      scales: {
+        x: {
+          type: "linear",
+          ticks: { callback: (v) => fmtTime(v / 1000), maxTicksLimit: 10 },
+        },
+        y: { beginAtZero: true },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { title: (items) => fmtTime(items[0].parsed.x / 1000) } },
+        zoom: {
+          pan: {
+            enabled: true,
+            mode: "x",
+            onPanComplete: ({ chart }) => fitSupplyY(chart),
+          },
+          zoom: {
+            wheel: { enabled: true },
+            pinch: { enabled: true },
+            mode: "x",
+            onZoom: ({ chart }) => fitSupplyY(chart),
+            onZoomComplete: ({ chart }) => {
+              $("#supply-reset").hidden = !chart.isZoomedOrPanned();
+              fitSupplyY(chart);
+            },
+          },
+          limits: { x: { min: "original", max: "original" } },
+        },
+      },
+    },
   });
+  $("#supply-reset").addEventListener("click", () => charts["#chart-supply"].resetZoom());
 
   makeChart("#chart-prices", {
     type: "bar",
