@@ -377,8 +377,13 @@ def _item_detail_schema() -> dict:
                 },
                 "series": {"type": "array", "items": _ref("SeriesPoint"), "description": "Per-snapshot aggregates of the price series."},
                 "points": {"type": "array", "items": _ref("ScatterPoint"), "description": "Downsampled raw unit-price observations."},
+                "histogram": {
+                    "type": "array",
+                    "items": _ref("PriceBin"),
+                    "description": "Per-unit price distribution over the item's distinct listings, with log-spaced numeric bounds derived from the observed price range.",
+                },
             },
-            ["item_type", "item_level", "current", "previous", "series", "points"],
+            ["item_type", "item_level", "current", "previous", "series", "points", "histogram"],
             strict=False,
         ),
     )
@@ -424,6 +429,18 @@ def _histogram_bin_schema() -> dict:
             "count": {"type": "integer"},
         },
         ["label", "count"],
+    )
+
+
+def _price_bin_schema() -> dict:
+    """One price bin with numeric bounds; the client renders the label."""
+    return _object(
+        {
+            "bin_start": {"type": "number", "description": "Inclusive lower price bound."},
+            "bin_end": {"type": "number", "description": "Upper price bound, inclusive for the last bin."},
+            "count": {"type": "integer"},
+        },
+        ["bin_start", "bin_end", "count"],
     )
 
 
@@ -681,6 +698,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "NotOnSaleRow": _not_on_sale_row_schema(),
                 "Overview": _overview_schema(),
                 "PreviousListing": _previous_listing_schema(),
+                "PriceBin": _price_bin_schema(),
                 "PriceMover": _price_mover_schema(),
                 "RemovedListing": _removed_listing_schema(),
                 "RemovalReason": _removal_reason_schema(),

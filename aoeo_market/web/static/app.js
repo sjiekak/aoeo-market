@@ -49,6 +49,13 @@ const fmtDur = (s) => {
 	const h = s / 3600;
 	return h < 48 ? h.toFixed(1) + " h" : (h / 24).toFixed(1) + " d";
 };
+// A bin edge arrives as a raw float. fmtPrice only rounds the k/M magnitudes,
+// so round to a readable precision first: otherwise a bin reads "0.84–1.378553".
+const fmtBinEdge = (v) => fmtPrice(Number(v.toPrecision(3)));
+const fmtBin = (b) =>
+	b.bin_start === b.bin_end
+		? fmtBinEdge(b.bin_start)
+		: `${fmtBinEdge(b.bin_start)}–${fmtBinEdge(b.bin_end)}`;
 const esc = (s) =>
 	String(s).replace(
 		/[&<>"']/g,
@@ -655,19 +662,6 @@ function renderItemImage(it) {
 	}
 }
 
-const HIST_BINS = [
-	[0, "<100"],
-	[100, "100–299"],
-	[300, "300–999"],
-	[1000, "1k–2.9k"],
-	[3000, "3k–9.9k"],
-	[10000, "10k–29.9k"],
-	[30000, "30k–99.9k"],
-	[100000, "100k–299k"],
-	[300000, "300k–999k"],
-	[1000000, "1M+"],
-];
-
 async function loadItem(itemId) {
 	const it = await api("/api/item/" + encodeURIComponent(itemId));
 	$("#item-title").textContent = it.name || it.item_id;
@@ -728,19 +722,14 @@ async function loadItem(itemId) {
 		},
 	});
 
-	const counts = HIST_BINS.map(() => 0);
-	for (const p of it.points) {
-		let idx = 0;
-		HIST_BINS.forEach(([lo], i) => {
-			if (p.price >= lo) idx = i;
-		});
-		counts[idx]++;
-	}
+	const hist = it.histogram || [];
 	makeChart("#chart-item-histogram", {
 		type: "bar",
 		data: {
-			labels: HIST_BINS.map(([, label]) => label),
-			datasets: [{ data: counts, backgroundColor: "#38bdf8" }],
+			labels: hist.map(fmtBin),
+			datasets: [
+				{ data: hist.map((b) => b.count), backgroundColor: "#38bdf8" },
+			],
 		},
 		options: {
 			plugins: { legend: { display: false } },
