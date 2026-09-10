@@ -22,13 +22,15 @@
 				<span id="snapshot-info" class="muted"></span>
 			</div>
 			<nav>
-				<button data-tab="overview" class="active">Overview</button>
-				<button data-tab="listings">Listings</button>
-				<button data-tab="best-sellers">Best sellers</button>
-				<button data-tab="best-value">Best value</button>
-				<button data-tab="not-on-sale">Not on sale</button>
-				<button data-tab="removed">Recently removed</button>
-				<button data-tab="item" id="nav-item" hidden>Item</button>
+				<button type="button" data-tab="overview" class="active">
+					Overview
+				</button>
+				<button type="button" data-tab="listings">Listings</button>
+				<button type="button" data-tab="best-sellers">Best sellers</button>
+				<button type="button" data-tab="best-value">Best value</button>
+				<button type="button" data-tab="not-on-sale">Not on sale</button>
+				<button type="button" data-tab="removed">Recently removed</button>
+				<button type="button" data-tab="item" id="nav-item" hidden>Item</button>
 			</nav>
 		</header>
 
@@ -60,11 +62,8 @@
 					<div class="card chart-card">
 						<h2>
 							Market supply over time
-							<span class="muted">scroll to zoom · drag to pan</span><button
-								id="supply-reset"
-								class="link"
-								hidden
-							>
+							<span class="muted">scroll to zoom · drag to pan</span
+							><button type="button" id="supply-reset" class="link" hidden>
 								reset
 							</button>
 						</h2>
@@ -115,13 +114,23 @@
 					<table>
 						<thead>
 							<tr>
-								<th><a data-order="item">Item</a></th>
-								<th><a data-order="type">Type</a></th>
-								<th class="num"><a data-order="level">Lvl</a></th>
-								<th class="num"><a data-order="count">Cnt</a></th>
-								<th class="num"><a data-order="price">Price/unit</a></th>
-								<th class="num"><a data-order="expiry">Expires</a></th>
-								<th><a data-order="seller">Seller</a></th>
+								<th><button type="button" data-order="item">Item</button></th>
+								<th><button type="button" data-order="type">Type</button></th>
+								<th class="num">
+									<button type="button" data-order="level">Lvl</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="count">Cnt</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="price">Price/unit</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="expiry">Expires</button>
+								</th>
+								<th>
+									<button type="button" data-order="seller">Seller</button>
+								</th>
 							</tr>
 						</thead>
 						<tbody id="listings-body"></tbody>
@@ -151,24 +160,43 @@
 						<table>
 							<thead>
 								<tr>
-									<th><a data-order="item">Item</a></th>
-									<th><a data-order="type">Type</a></th>
-									<th class="num"><a data-order="level">Lvl</a></th>
-									<th><a data-order="rarity">Rarity</a></th>
+									<th><button type="button" data-order="item">Item</button></th>
+									<th><button type="button" data-order="type">Type</button></th>
 									<th class="num">
-										<a data-order="median_time">Median time-to-sale</a>
+										<button type="button" data-order="level">Lvl</button>
 									</th>
-									<th class="num"><a data-order="min_time">Min</a></th>
-									<th class="num"><a data-order="max_time">Max</a></th>
-									<th class="num"><a data-order="sales">Sales</a></th>
-									<th class="num"><a data-order="expired">Expired</a></th>
-									<th class="num">
-										<a data-order="active_count">On sale now</a>
+									<th>
+										<button type="button" data-order="rarity">Rarity</button>
 									</th>
 									<th class="num">
-										<a data-order="current_median_unit_price"
-											>Current median/unit</a
+										<button type="button" data-order="median_time">
+											Median time-to-sale
+										</button>
+									</th>
+									<th class="num">
+										<button type="button" data-order="min_time">Min</button>
+									</th>
+									<th class="num">
+										<button type="button" data-order="max_time">Max</button>
+									</th>
+									<th class="num">
+										<button type="button" data-order="sales">Sales</button>
+									</th>
+									<th class="num">
+										<button type="button" data-order="expired">Expired</button>
+									</th>
+									<th class="num">
+										<button type="button" data-order="active_count">
+											On sale now
+										</button>
+									</th>
+									<th class="num">
+										<button
+											type="button"
+											data-order="current_median_unit_price"
 										>
+											Current median/unit
+										</button>
 									</th>
 								</tr>
 							</thead>
@@ -200,28 +228,47 @@
 						<table>
 							<thead>
 								<tr>
-									<th><a data-order="item">Item</a></th>
-									<th><a data-order="type">Type</a></th>
-									<th class="num"><a data-order="level">Lvl</a></th>
-									<th><a data-order="rarity">Rarity</a></th>
+									<th><button type="button" data-order="item">Item</button></th>
+									<th><button type="button" data-order="type">Type</button></th>
 									<th class="num">
-										<a data-order="value_ratio">Value ratio</a>
+										<button type="button" data-order="level">Lvl</button>
+									</th>
+									<th>
+										<button type="button" data-order="rarity">Rarity</button>
 									</th>
 									<th class="num">
-										<a data-order="median_unit_price">Typical/unit (hist.)</a>
+										<button type="button" data-order="value_ratio">
+											Value ratio
+										</button>
 									</th>
 									<th class="num">
-										<a data-order="current_median_unit_price"
-											>Now/unit (median)</a
+										<button type="button" data-order="median_unit_price">
+											Typical/unit (hist.)
+										</button>
+									</th>
+									<th class="num">
+										<button
+											type="button"
+											data-order="current_median_unit_price"
 										>
+											Now/unit (median)
+										</button>
 									</th>
 									<th class="num">
-										<a data-order="current_min_unit_price">Now/unit (min)</a>
+										<button type="button" data-order="current_min_unit_price">
+											Now/unit (min)
+										</button>
 									</th>
 									<th class="num">
-										<a data-order="cheaper_than_pct">Cheaper than</a>
+										<button type="button" data-order="cheaper_than_pct">
+											Cheaper than
+										</button>
 									</th>
-									<th class="num"><a data-order="active_count">On sale</a></th>
+									<th class="num">
+										<button type="button" data-order="active_count">
+											On sale
+										</button>
+									</th>
 								</tr>
 							</thead>
 							<tbody id="value-body"></tbody>
@@ -243,19 +290,39 @@
 					<table>
 						<thead>
 							<tr>
-								<th><a data-order="item">Item</a></th>
-								<th><a data-order="type">Type</a></th>
-								<th class="num"><a data-order="level">Lvl</a></th>
-								<th><a data-order="rarity">Rarity</a></th>
+								<th><button type="button" data-order="item">Item</button></th>
+								<th><button type="button" data-order="type">Type</button></th>
 								<th class="num">
-									<a data-order="median_unit_price">Median price/unit</a>
+									<button type="button" data-order="level">Lvl</button>
 								</th>
-								<th class="num"><a data-order="min_unit_price">Min/unit</a></th>
-								<th class="num"><a data-order="max_unit_price">Max/unit</a></th>
+								<th>
+									<button type="button" data-order="rarity">Rarity</button>
+								</th>
 								<th class="num">
-									<a data-order="times_listed">Times listed</a>
+									<button type="button" data-order="median_unit_price">
+										Median price/unit
+									</button>
 								</th>
-								<th class="num"><a data-order="last_seen">Last seen</a></th>
+								<th class="num">
+									<button type="button" data-order="min_unit_price">
+										Min/unit
+									</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="max_unit_price">
+										Max/unit
+									</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="times_listed">
+										Times listed
+									</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="last_seen">
+										Last seen
+									</button>
+								</th>
 							</tr>
 						</thead>
 						<tbody id="nos-body"></tbody>
@@ -302,7 +369,9 @@
 
 			<!-- Item detail -->
 			<section id="tab-item" hidden>
-				<button id="item-back" class="link">← back to listings</button>
+				<button type="button" id="item-back" class="link">
+					← back to listings
+				</button>
 				<div class="item-head">
 					<div id="item-image" class="item-icon" hidden></div>
 					<div class="item-head-text">

@@ -177,20 +177,23 @@ th {
 	font-weight: 600;
 	font-size: 13px;
 }
-th a {
+th button {
+	background: none;
+	border: 0;
+	padding: 0;
+	font: inherit;
 	color: var(--muted);
-	text-decoration: none;
 	cursor: pointer;
 	user-select: none;
 }
-th a:hover,
-th a.active {
+th button:hover,
+th button.active {
 	color: var(--accent);
 }
-th a.sort-min::after {
+th button.sort-min::after {
 	content: " ↑";
 }
-th a.sort-max::after {
+th button.sort-max::after {
 	content: " ↓";
 }
 tbody tr:hover {

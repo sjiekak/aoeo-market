@@ -43,7 +43,6 @@ const fmtTime = (t) =>
 				timeStyle: "short",
 			})
 		: "—";
-const fmtDate = (t) => (t ? new Date(t * 1000).toLocaleDateString() : "—");
 const fmtDays = (s) => (s == null ? "—" : (s / 86400).toFixed(1) + "d");
 const fmtDur = (s) => {
 	if (s == null) return "—";
@@ -85,28 +84,28 @@ function makeChart(canvasId, config) {
 // an aria-sort attribute for assistive tech.
 function wireColumnSort(tabId, { apply, order = null, dir = null }) {
 	const state = { order, dir };
-	const links = () =>
-		document.querySelectorAll(`#tab-${tabId} th a[data-order]`);
+	const buttons = () =>
+		document.querySelectorAll(`#tab-${tabId} th button[data-order]`);
 	function sync() {
-		links().forEach((a) => {
-			const th = a.closest("th");
-			const active = a.dataset.order === state.order;
-			a.classList.toggle("active", active);
-			a.classList.remove("sort-min", "sort-max");
+		buttons().forEach((btn) => {
+			const th = btn.closest("th");
+			const active = btn.dataset.order === state.order;
+			btn.classList.toggle("active", active);
+			btn.classList.remove("sort-min", "sort-max");
 			if (active) {
 				th.setAttribute(
 					"aria-sort",
 					state.dir === "desc" ? "descending" : "ascending",
 				);
-				a.classList.add(state.dir === "desc" ? "sort-max" : "sort-min");
+				btn.classList.add(state.dir === "desc" ? "sort-max" : "sort-min");
 			} else {
 				th.removeAttribute("aria-sort");
 			}
 		});
 	}
-	links().forEach((a) =>
-		a.addEventListener("click", () => {
-			const col = a.dataset.order;
+	buttons().forEach((btn) => {
+		btn.addEventListener("click", () => {
+			const col = btn.dataset.order;
 			if (state.order !== col) {
 				state.order = col;
 				state.dir = "asc"; // a new column starts sorted min-first
@@ -118,8 +117,8 @@ function wireColumnSort(tabId, { apply, order = null, dir = null }) {
 			}
 			sync();
 			apply(state);
-		}),
-	);
+		});
+	});
 	sync();
 	return state;
 }
@@ -133,21 +132,21 @@ function orderQuery(order, dir) {
 /* --- tabs ---------------------------------------------------------------- */
 
 function showTab(name) {
-	document
-		.querySelectorAll("main > section")
-		.forEach((s) => (s.hidden = s.id !== "tab-" + name));
-	document
-		.querySelectorAll("nav button")
-		.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+	document.querySelectorAll("main > section").forEach((s) => {
+		s.hidden = s.id !== `tab-${name}`;
+	});
+	document.querySelectorAll("nav button").forEach((b) => {
+		b.classList.toggle("active", b.dataset.tab === name);
+	});
 }
 
-document.querySelectorAll("nav button").forEach((b) =>
+document.querySelectorAll("nav button").forEach((b) => {
 	b.addEventListener("click", () => {
 		if (b.dataset.tab === "item") return;
 		history.replaceState(null, "", window.location.pathname);
 		showTab(b.dataset.tab);
-	}),
-);
+	});
+});
 
 /* --- overview ------------------------------------------------------------ */
 
@@ -732,7 +731,9 @@ async function loadItem(itemId) {
 	const counts = HIST_BINS.map(() => 0);
 	for (const p of it.points) {
 		let idx = 0;
-		HIST_BINS.forEach(([lo], i) => (p.price >= lo ? (idx = i) : null));
+		HIST_BINS.forEach(([lo], i) => {
+			if (p.price >= lo) idx = i;
+		});
 		counts[idx]++;
 	}
 	makeChart("#chart-item-histogram", {
