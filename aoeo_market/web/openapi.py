@@ -377,8 +377,13 @@ def _item_detail_schema() -> dict:
                 },
                 "series": {"type": "array", "items": _ref("SeriesPoint"), "description": "Per-snapshot aggregates of the price series."},
                 "points": {"type": "array", "items": _ref("ScatterPoint"), "description": "Downsampled raw unit-price observations."},
+                "histogram": {
+                    "type": "array",
+                    "items": _ref("HistogramBin"),
+                    "description": "Per-unit price distribution over the item's distinct listings, with log-spaced bin edges derived from the observed price range.",
+                },
             },
-            ["item_type", "item_level", "current", "previous", "series", "points"],
+            ["item_type", "item_level", "current", "previous", "series", "points", "histogram"],
             strict=False,
         ),
     )

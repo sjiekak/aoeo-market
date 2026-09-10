@@ -128,6 +128,48 @@ def test_price_history_previous_listings(tmp_path):
     conn.close()
 
 
+def test_price_history_histogram_bins_follow_the_data(tmp_path):
+    """Bin edges come from the item's own prices, not a fixed ladder.
+
+    The old static ladder spanned 0..1M, so an item trading in the low
+    thousands landed in one or two of its ten bins. Unit price is what is
+    binned, so stack size must not change the shape.
+    """
+    conn = store.open_store(tmp_path / "m.db")
+    # unit prices 100 and 200
+    store.record_snapshot(conn, [mk(1, price=200, count=2), mk(2, price=800, count=4)], captured_at=1000.0)
+
+    hist = store.price_history(conn, "Sword_U_III")["histogram"]
+    assert [b["count"] for b in hist] == [1, 1]
+    assert hist[0]["label"].startswith("100")
+    assert hist[-1]["label"].endswith("200")
+    conn.close()
+
+
+def test_price_history_histogram_counts_each_listing_once(tmp_path):
+    """A listing keeps its unit price for its whole life, so binning every
+    snapshot would weight the shape by how long each listing lingered."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, price=100), mk(2, price=400)], captured_at=1000.0)
+    store.record_snapshot(conn, [mk(1, price=100)], captured_at=2000.0)
+    store.record_snapshot(conn, [mk(1, price=100)], captured_at=3000.0)
+
+    hist = store.price_history(conn, "Sword_U_III")
+    assert len(hist["points"]) == 4  # the scatter keeps every observation
+    assert sum(b["count"] for b in hist["histogram"]) == 2  # the histogram counts listings
+    conn.close()
+
+
+def test_price_history_histogram_single_price_is_one_bin(tmp_path):
+    """A range that cannot be log-spaced collapses to a single bin."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, price=100), mk(2, price=100)], captured_at=1000.0)
+
+    hist = store.price_history(conn, "Sword_U_III")["histogram"]
+    assert hist == [{"label": "100", "count": 2}]
+    conn.close()
+
+
 def test_items_not_on_sale(tmp_path):
     conn = store.open_store(tmp_path / "m.db")
     store.record_snapshot(conn, [mk(1, item_id="Gone_L_IV", price=100), mk(2, item_id="Still_U_II", price=500)], captured_at=1000.0)

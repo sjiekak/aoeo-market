@@ -655,19 +655,6 @@ function renderItemImage(it) {
 	}
 }
 
-const HIST_BINS = [
-	[0, "<100"],
-	[100, "100–299"],
-	[300, "300–999"],
-	[1000, "1k–2.9k"],
-	[3000, "3k–9.9k"],
-	[10000, "10k–29.9k"],
-	[30000, "30k–99.9k"],
-	[100000, "100k–299k"],
-	[300000, "300k–999k"],
-	[1000000, "1M+"],
-];
-
 async function loadItem(itemId) {
 	const it = await api("/api/item/" + encodeURIComponent(itemId));
 	$("#item-title").textContent = it.name || it.item_id;
@@ -728,19 +715,14 @@ async function loadItem(itemId) {
 		},
 	});
 
-	const counts = HIST_BINS.map(() => 0);
-	for (const p of it.points) {
-		let idx = 0;
-		HIST_BINS.forEach(([lo], i) => {
-			if (p.price >= lo) idx = i;
-		});
-		counts[idx]++;
-	}
+	const hist = it.histogram || [];
 	makeChart("#chart-item-histogram", {
 		type: "bar",
 		data: {
-			labels: HIST_BINS.map(([, label]) => label),
-			datasets: [{ data: counts, backgroundColor: "#38bdf8" }],
+			labels: hist.map((b) => b.label),
+			datasets: [
+				{ data: hist.map((b) => b.count), backgroundColor: "#38bdf8" },
+			],
 		},
 		options: {
 			plugins: { legend: { display: false } },

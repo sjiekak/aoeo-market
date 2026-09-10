@@ -22,6 +22,7 @@ All times are Unix timestamps (UTC seconds).
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from collections.abc import Iterable, Sequence
@@ -345,6 +346,50 @@ def _price_histogram(prices: Sequence[int]) -> list[dict]:
     return [{"label": label, "count": counts[i]} for i, (_, label) in enumerate(_PRICE_BINS)]
 
 
+def _price_label(value: float) -> str:
+    """Compact price label, mirroring the dashboard's ``fmtPrice`` helper."""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return f"{value:g}"
+
+
+def _log_price_bins(prices: Sequence[float], bins: int = 10) -> list[dict]:
+    """Histogram whose bin edges come from the data rather than a fixed ladder.
+
+    Prices are multiplicative and right-skewed, so one static ladder cannot fit
+    every item: a fixed 0..1M ramp put the median item's observations into two
+    of its ten bins, leaving 86% of them in a single bar. Spacing the edges
+    evenly in log space across the item's *own* range keeps the whole chart on
+    the prices that actually exist, whatever the item's scale.
+
+    The bin count is capped by the number of distinct prices so a low-variety
+    item does not render a row of empty bars. Returns ``[]`` for no data, and a
+    single bin when every observation shares one price (or the range cannot be
+    log-spaced, e.g. a zero price).
+    """
+    values = sorted(prices)
+    if not values:
+        return []
+    lo, hi = values[0], values[-1]
+    if lo <= 0 or hi <= lo:
+        return [{"label": _price_label(lo), "count": len(values)}]
+
+    count = max(1, min(bins, len(set(values))))
+    a, b = math.log10(lo), math.log10(hi)
+    edges = [10 ** (a + (b - a) * i / count) for i in range(count + 1)]
+
+    counts = [0] * count
+    for p in values:
+        idx = 0
+        for i in range(count):
+            if p >= edges[i]:
+                idx = i
+        counts[idx] += 1
+    return [{"label": f"{_price_label(edges[i])}–{_price_label(edges[i + 1])}", "count": counts[i]} for i in range(count)]
+
+
 def _price_movers(conn: duckdb.DuckDBPyConnection, sid: int, prev_sid: int | None, top: int) -> list[dict]:
     """Items whose median price moved most between two snapshots (percent)."""
     if prev_sid is None:
@@ -398,7 +443,9 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     the vanished ones as full listing rows (all wire fields plus first/last
     seen, vanished-at, and the EXPIRED vs REMOVED classification), newest
     first.  The raw scatter points are downsampled evenly to *max_points* so
-    long histories stay chartable.
+    long histories stay chartable.  ``histogram`` is the per-unit price
+    distribution of the item's distinct listings, binned across the observed
+    price range.
     """
     rows = _rows(
         conn,
@@ -495,6 +542,12 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         step = len(points) / max_points
         points = [points[int(i * step)] for i in range(max_points)]
 
+    # Count each listing once: a listing keeps its unit price for its whole
+    # life, so binning the per-snapshot points would weight it by how long it
+    # lingered rather than by how it was priced.
+    listing_prices = [round(t["row"]["item_price"] / max(t["row"]["item_count"], 1), 2) for t in txs.values()]
+    histogram = _log_price_bins(listing_prices)
+
     meta = series[max(series)]
     rar = rarity_of(item_id)
     extra = catalog_fields(item_id)
@@ -511,6 +564,7 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         "previous": previous,
         "series": ordered,
         "points": points,
+        "histogram": histogram,
     }
 
 
