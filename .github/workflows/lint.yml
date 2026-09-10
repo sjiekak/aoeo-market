@@ -14,3 +14,25 @@ jobs:
         uses: astral-sh/ruff-action@v2
         with:
           args: check
+
+      - name: Run ruff format check
+        uses: astral-sh/ruff-action@v2
+        with:
+          args: format --check
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the Biome CLI. The version is detected from the `$schema`
+      # field in biome.json, so there is no separate version pin to keep
+      # in sync here.
+      - name: Setup Biome
+        uses: biomejs/setup-biome@v2
+
+      # `biome ci` never writes files and reports diagnostics as GitHub
+      # annotations. Which files are checked comes from `files.includes`
+      # in biome.json, and warnings alone do not fail the build.
+      - name: Run Biome
+        run: biome ci
