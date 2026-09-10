@@ -49,6 +49,13 @@ const fmtDur = (s) => {
 	const h = s / 3600;
 	return h < 48 ? h.toFixed(1) + " h" : (h / 24).toFixed(1) + " d";
 };
+// A bin edge arrives as a raw float. fmtPrice only rounds the k/M magnitudes,
+// so round to a readable precision first: otherwise a bin reads "0.84–1.378553".
+const fmtBinEdge = (v) => fmtPrice(Number(v.toPrecision(3)));
+const fmtBin = (b) =>
+	b.bin_start === b.bin_end
+		? fmtBinEdge(b.bin_start)
+		: `${fmtBinEdge(b.bin_start)}–${fmtBinEdge(b.bin_end)}`;
 const esc = (s) =>
 	String(s).replace(
 		/[&<>"']/g,
@@ -719,7 +726,7 @@ async function loadItem(itemId) {
 	makeChart("#chart-item-histogram", {
 		type: "bar",
 		data: {
-			labels: hist.map((b) => b.label),
+			labels: hist.map(fmtBin),
 			datasets: [
 				{ data: hist.map((b) => b.count), backgroundColor: "#38bdf8" },
 			],

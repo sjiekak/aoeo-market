@@ -346,15 +346,6 @@ def _price_histogram(prices: Sequence[int]) -> list[dict]:
     return [{"label": label, "count": counts[i]} for i, (_, label) in enumerate(_PRICE_BINS)]
 
 
-def _price_label(value: float) -> str:
-    """Compact price label, mirroring the dashboard's ``fmtPrice`` helper."""
-    if value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
-    if value >= 1_000:
-        return f"{value / 1_000:.1f}k"
-    return f"{value:g}"
-
-
 def _log_price_bins(prices: Sequence[float], bins: int = 10) -> list[dict]:
     """Histogram whose bin edges come from the data rather than a fixed ladder.
 
@@ -365,20 +356,24 @@ def _log_price_bins(prices: Sequence[float], bins: int = 10) -> list[dict]:
     the prices that actually exist, whatever the item's scale.
 
     The bin count is capped by the number of distinct prices so a low-variety
-    item does not render a row of empty bars. Returns ``[]`` for no data, and a
-    single bin when every observation shares one price (or the range cannot be
-    log-spaced, e.g. a zero price).
+    item does not render a row of empty bars. Bins carry numeric bounds only —
+    turning them into labels is the dashboard's job. Returns ``[]`` for no
+    data, and a single bin when every observation shares one price (or the
+    range cannot be log-spaced, e.g. a zero price).
     """
     values = sorted(prices)
     if not values:
         return []
     lo, hi = values[0], values[-1]
     if lo <= 0 or hi <= lo:
-        return [{"label": _price_label(lo), "count": len(values)}]
+        return [{"bin_start": lo, "bin_end": hi, "count": len(values)}]
 
     count = max(1, min(bins, len(set(values))))
     a, b = math.log10(lo), math.log10(hi)
-    edges = [10 ** (a + (b - a) * i / count) for i in range(count + 1)]
+    # round() strips the float noise of the 10**log10() round trip; the outer
+    # edges are pinned back to the real data bounds.
+    edges = [round(10 ** (a + (b - a) * i / count), 6) for i in range(count + 1)]
+    edges[0], edges[count] = lo, hi
 
     counts = [0] * count
     for p in values:
@@ -387,7 +382,7 @@ def _log_price_bins(prices: Sequence[float], bins: int = 10) -> list[dict]:
             if p >= edges[i]:
                 idx = i
         counts[idx] += 1
-    return [{"label": f"{_price_label(edges[i])}–{_price_label(edges[i + 1])}", "count": counts[i]} for i in range(count)]
+    return [{"bin_start": edges[i], "bin_end": edges[i + 1], "count": counts[i]} for i in range(count)]
 
 
 def _price_movers(conn: duckdb.DuckDBPyConnection, sid: int, prev_sid: int | None, top: int) -> list[dict]:

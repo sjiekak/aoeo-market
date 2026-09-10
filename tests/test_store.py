@@ -141,8 +141,9 @@ def test_price_history_histogram_bins_follow_the_data(tmp_path):
 
     hist = store.price_history(conn, "Sword_U_III")["histogram"]
     assert [b["count"] for b in hist] == [1, 1]
-    assert hist[0]["label"].startswith("100")
-    assert hist[-1]["label"].endswith("200")
+    assert hist[0]["bin_start"] == 100  # pinned to the item's own minimum
+    assert hist[-1]["bin_end"] == 200  # and its own maximum
+    assert "label" not in hist[0]  # labelling is the dashboard's job
     conn.close()
 
 
@@ -166,7 +167,7 @@ def test_price_history_histogram_single_price_is_one_bin(tmp_path):
     store.record_snapshot(conn, [mk(1, price=100), mk(2, price=100)], captured_at=1000.0)
 
     hist = store.price_history(conn, "Sword_U_III")["histogram"]
-    assert hist == [{"label": "100", "count": 2}]
+    assert hist == [{"bin_start": 100, "bin_end": 100, "count": 2}]
     conn.close()
 
 
