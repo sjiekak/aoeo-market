@@ -228,6 +228,10 @@ tbody tr:hover {
 	color: #38bdf8;
 	border-color: #38bdf8;
 }
+.badge.craftable {
+	color: #2dd4bf;
+	border-color: #2dd4bf;
+}
 
 .up {
 	color: #4ade80;

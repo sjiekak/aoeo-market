@@ -38,14 +38,52 @@ def test_name_of():
     assert catalog.name_of("unknown-id") is None
 
 
+def test_is_craftable_matches_a_design_output():
+    # A material produced by the "Pure Gold Ingots" design is craftable.
+    assert catalog.is_craftable("4PureGoldIngot") is True
+    assert catalog.is_craftable("4puregoldingot") is True
+    # A design is the recipe, not something another design produces.
+    assert catalog.is_craftable("craftironingot") is False
+    # Advisors and blueprints have no producing design.
+    assert catalog.is_craftable("Xerxes_L_IV") is False
+    assert catalog.is_craftable("does-not-exist") is False
+
+
+def test_craftable_marks_only_design_outputs():
+    """The craftable flag lands on crafted kinds and nowhere else."""
+    path = Path(catalog.__file__).with_name("data") / "catalog.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    craftable = {k: v for k, v in data.items() if "craftable" in v}
+
+    # Every design produces a distinct output, and all of them are catalog ids.
+    assert len(craftable) > 500
+    assert all(v["craftable"] is True for v in craftable.values())
+    # Designs and their non-crafted siblings (advisors, blueprints) stay out.
+    assert {v["kind"] for v in craftable.values()} <= {"item", "consumable", "material"}
+
+
 def test_fields_omit_absent_extras():
     f = catalog.fields("4PureGoldIngot")
     assert f["name"] == "Pure Gold Ingots"
     assert f["kind"] == "material"
     assert f["icon"]
     assert f["description"]
+    # Craftability rides along for items a design produces.
+    assert f["craftable"] is True
     # Unknown id: only a null name is merged in.
     assert catalog.fields("nope") == {"name": None}
+    # Items no design produces carry no craftable key at all.
+    assert "craftable" not in catalog.fields("Xerxes_L_IV")
+
+
+def test_icon_fields_include_craftable():
+    """The compact row helper used by the analytical views carries the flag."""
+    f = catalog.icon_fields("4PureGoldIngot")
+    assert f["kind"] == "material"
+    assert f["icon"]
+    assert f["craftable"] is True
+    assert "craftable" not in catalog.icon_fields("Xerxes_L_IV")
+    assert catalog.icon_fields("nope") == {}
 
 
 def test_sprite_index_covers_every_catalog_icon():

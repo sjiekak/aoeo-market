@@ -154,6 +154,14 @@ two models instead of repeating fields.
   source records them — a **description**, **civilization**, advisor **age**
   and seasonal **event**.  These fields ride along on the listing and item
   rows, and the listings search matches the display name as well as the raw id.
+- **Craftability** — an item is `craftable` when a crafting **design** produces
+  it: the generated catalog marks every id that appears as a design's
+  `outputId` (see `aoeo_market.catalog.is_craftable`).  The flag rides along on
+  the listing and item rows like the other catalog fields, and is omitted for
+  items no design produces.  Design outputs cover gear (439), consumables (129)
+  and materials (40) — a superset of the `recipe` block that only gear entities
+  carry.  The dashboard renders a teal **craftable** badge immediately after the
+  rarity tag wherever an item is named.
 - **Item icons** — the item page shows the item's icon clipped in the browser
   from a sprite sheet via CSS `background-position`, exactly as celeste-search
   renders it (all sprite work is client-side).  The position index

@@ -77,6 +77,21 @@ function rarityBadge(name) {
 	return `<span class="badge" style="color:${color};border-color:${color}">${esc(name)}</span>`;
 }
 
+// A design produces this item, so it can be crafted. Rendered as a badge that
+// sits right beside the rarity tag (see rarityTag); nothing when not craftable.
+function craftableBadge(craftable) {
+	if (!craftable) return "";
+	return '<span class="badge craftable" title="Craftable — a design produces this item">craftable</span>';
+}
+
+// The rarity tag as it appears next to an item name: the rarity badge followed
+// by the craftable badge, each omitted when the row has no such value.
+function rarityTag(row) {
+	return [rarityBadge(row.rarity), craftableBadge(row.craftable)]
+		.filter(Boolean)
+		.join(" ");
+}
+
 function makeChart(canvasId, config) {
 	if (charts[canvasId]) charts[canvasId].destroy();
 	charts[canvasId] = new Chart($(canvasId), config);
@@ -316,7 +331,7 @@ async function loadOverview() {
 		o.top_movers
 			.map(
 				(m) => `<tr>
-        <td>${itemName(m)} ${rarityBadge(m.rarity)}</td>
+        <td>${itemName(m)} ${rarityTag(m)}</td>
         <td class="num">${fmtPrice(m.median_before)}</td>
         <td class="num">${fmtPrice(m.median_now)}</td>
         <td class="num ${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "+" : ""}${m.change_pct}%</td>
@@ -391,7 +406,7 @@ function renderListings() {
 	$("#listings-body").innerHTML = rows
 		.map(
 			(l) => `<tr>
-        <td>${itemName(l)} ${rarityBadge(l.rarity)}</td>
+        <td>${itemName(l)} ${rarityTag(l)}</td>
         <td>${esc(l.item_type)}</td>
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
@@ -447,7 +462,7 @@ async function loadBestSellers() {
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityTag(r)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -520,7 +535,7 @@ async function loadBestValue() {
         <td>${itemName(r)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
-        <td>${rarityBadge(r.rarity)}</td>
+        <td>${rarityTag(r)}</td>
         <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
         <td class="num">${fmtPrice(r.median_unit_price)}</td>
         <td class="num">${fmtPrice(r.current_median_unit_price)}</td>
@@ -549,7 +564,7 @@ async function loadNotOnSale() {
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityTag(r)}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -584,7 +599,7 @@ async function loadRemoved() {
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)} ${rarityBadge(r.rarity)}</td>
+        <td>${itemName(r)} ${rarityTag(r)}</td>
         <td>${esc(r.item_type)}</td>
         <td>${esc(r.rarity || "—")}</td>
         <td class="num">${fmtPrice(r.item_price)}</td>
@@ -668,6 +683,7 @@ async function loadItem(itemId) {
 	const nav = it.name || it.item_id;
 	$("#nav-item").textContent = nav.length > 24 ? nav.slice(0, 24) + "…" : nav;
 	let meta = `${esc(it.item_id)} · ${esc(it.item_type)} · level ${it.item_level} · ${rarityBadge(it.rarity) || "rarity unknown"}`;
+	if (it.craftable) meta += ` ${craftableBadge(it.craftable)}`;
 	if (it.civilization) meta += ` · ${esc(it.civilization)}`;
 	if (it.age != null) meta += ` · age ${it.age}`;
 	$("#item-meta").innerHTML = meta;

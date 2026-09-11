@@ -78,6 +78,18 @@ def test_listing_enriched_from_catalog(tmp_path):
     conn.close()
 
 
+def test_listing_craftable_flag_from_catalog(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="4PureGoldIngot", item_type="Material", price=100)], captured_at=1000.0)
+    row = store.active_listings(conn)[0]
+    assert row["craftable"] is True
+
+    # An item no design produces carries no craftable key.
+    store.record_snapshot(conn, [mk(2, item_id="Xerxes_L_IV", item_type="Advisor", price=100)], captured_at=2000.0)
+    assert "craftable" not in store.active_listings(conn)[0]
+    conn.close()
+
+
 def test_active_listings_search_matches_display_name(tmp_path):
     conn = store.open_store(tmp_path / "m.db")
     store.record_snapshot(conn, [mk(1, item_id="Xerxes_L_IV", item_type="Advisor", price=100)], captured_at=1000.0)
@@ -183,6 +195,18 @@ def test_items_not_on_sale(tmp_path):
     assert gone["times_listed"] == 1
     assert gone["last_seen"] == 1000.0
     assert gone["rarity"] == "Legendary"
+    conn.close()
+
+
+def test_items_not_on_sale_reports_craftable(tmp_path):
+    """Analytical rows built via icon_fields carry the craftable flag too."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="4PureGoldIngot", item_type="Material", price=100)], captured_at=1000.0)
+    store.record_snapshot(conn, [mk(2, item_id="Xerxes_L_IV", item_type="Advisor", price=100)], captured_at=2000.0)
+
+    rows = store.items_not_on_sale(conn)
+    assert [r["item_id"] for r in rows] == ["4PureGoldIngot"]
+    assert rows[0]["craftable"] is True
     conn.close()
 
 
