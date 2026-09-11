@@ -68,6 +68,25 @@ def test_init_db_command_creates_and_is_idempotent(tmp_path, capsys):
     assert "0 snapshots present" in capsys.readouterr().out
 
 
+def test_backfill_command_fills_old_rows_once(tmp_path, capsys):
+    """`backfill` fills rows stored before the column and is a no-op after."""
+    db = tmp_path / "market.db"
+    conn = store.open_store(db)
+    store.record_snapshot(conn, [_mk(1)], captured_at=1000.0)
+    conn.execute("UPDATE listings SET expires_at = NULL")  # simulate a pre-column row
+    conn.close()
+
+    assert cli_mod.main(["backfill", "--db", str(db)]) == 0
+    assert "backfilled absolute expiry for 1 listing" in capsys.readouterr().out
+    conn = store.open_store(db)
+    assert store.active_listings(conn)[0]["expires_at"] is not None
+    conn.close()
+
+    # a second run has nothing left to do
+    assert cli_mod.main(["backfill", "--db", str(db)]) == 0
+    assert "already up to date" in capsys.readouterr().out
+
+
 def test_probe_reports_rejected_login(monkeypatch, capsys):
     """A rejected 4564 login makes `probe` fail with a clear message."""
     from types import SimpleNamespace

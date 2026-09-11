@@ -24,7 +24,15 @@ runs as a **CronJob** that only needs network access to the service.
 
 - `aoeo_market/store.py` — the DuckDB schema and the snapshot/analytics API.
   Two tables: `snapshots(id, captured_at)` and
-  `listings(snapshot_id, transaction_id, …, seconds_till_expiry)`.
+  `listings(snapshot_id, transaction_id, …, seconds_till_expiry, expires_at)`.
+  `seconds_till_expiry` is the countdown the wire record carries; each snapshot
+  also stores the absolute `expires_at` (a timezone-free `TIMESTAMP` whose wall
+  clock is UTC, computed at capture as `captured_at + seconds_till_expiry` and
+  read back as an ISO-8601 UTC string), so the snapshot preserves *when* a
+  listing expires. Databases created before the column are upgraded in place:
+  opening one adds the nullable column, and the one-shot
+  `aoeo_market.cli backfill` command fills it from each snapshot's
+  `captured_at`.
   DuckDB is a single-file, in-process OLAP engine (no server to deploy): the
   columnar engine keeps the dashboards fast as the history grows, and its SQL
   surface (medians, percentiles, ILIKE) matches the analytics queries.
@@ -85,7 +93,9 @@ The intended deployment puts both components in one namespace:
   openable).  An **init container** runs
   `python -m aoeo_market.cli init-db --db /data/market.db` first, so the pod
   always starts with a ready, schema-complete database on the volume
-  (idempotent — safe on every restart).
+  (idempotent — safe on every restart).  Upgrading a volume that predates the
+  absolute expiry needs one extra run of
+  `python -m aoeo_market.cli backfill --db /data/market.db` to fill it.
 - **Fetcher** — a CronJob (`schedule: "0 * * * *"`) running
   `python -m aoeo_market.cli fetch --store http://<service>:8000 --quiet`
   with the credentials in a Secret (`AOEO_EMAIL` / `AOEO_PASSWORD`).  Same
@@ -127,7 +137,7 @@ to the unsorted order. Clicking a different column starts it min-first.
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
 | `GET /api/recently-removed?window=` | listings that vanished between the last two snapshots (default), or within the last `window` seconds |
-| `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}` |
+| `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}`; the server computes and stores each absolute `expires_at` from the posted countdown |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
 
@@ -136,7 +146,8 @@ shared models: a `Listing` is a `StockItem` (id, type, level, count, price,
 seed) listed by a seller, and `ItemSummary` is the curated identity (name,
 rarity, kind, icon, …) attached to every row that names an item. Row schemas
 (`ListingRow`, `PreviousListing`, `RemovedListing`, the view rows) reuse those
-two models instead of repeating fields.
+two models instead of repeating fields; listing-shaped rows also carry the
+read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 
 ## Data notes
 
@@ -168,8 +179,14 @@ two models instead of repeating fields.
   (`aoeo_market/web/static/sprites.json`) is committed; the `.webp` sheets
   under `aoeo_market/web/static/sprites/` are gitignored game art regenerated
   by `scripts/build_sprites.py` from `ProjectCeleste/celeste-search`.
-- All timestamps are Unix seconds in UTC; the dashboard renders them in the
-  browser's local timezone.
+- All timestamps are Unix seconds in UTC, with one read-side exception: the
+  stored absolute expiry is returned as an ISO-8601 UTC string (`expires_at`,
+  always `…Z`) — the instant `captured_at + seconds_till_expiry` for the
+  snapshot that observed the listing, so a listing that vanished can still
+  say when it expired. It is stored as a plain UTC `TIMESTAMP` (no timezone
+  attached); an upgraded database gets it for pre-existing snapshots by running
+  `python -m aoeo_market.cli backfill --db market.db` once. The dashboard
+  renders every instant, this one included, in the browser's local timezone.
 - With one snapshot only, the "not on sale" and "recently removed" views are
   empty and the movers table says so — everything fills in from the second
   snapshot onwards.
