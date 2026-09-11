@@ -21,8 +21,20 @@ the lowercased marketplace/wire item id::
         "civilization": "persian",
         "age": 4
       },
+      "4puregoldingot": {
+        "name": "Pure Gold Ingots",
+        "rarity": "Epic",
+        "kind": "material",
+        "icon": "…",
+        "craftable": true
+      },
       …
     }
+
+``craftable`` is added to every id a crafting design produces (the design's
+``outputId``): a player can craft the item when a design teaches it.  That is
+broader than the ``recipe`` block on gear entities — it also covers the
+materials and consumables that designs produce.
 
 The generated file is committed (``aoeo_market/data/catalog.json``) so the
 market observer does **not** depend on the gitignored ``ProjectCeleste`` tree
@@ -105,6 +117,16 @@ def _description(entity: dict, rarity_key: str | None) -> str | None:
     return None
 
 
+def _design_outputs(src_dir: Path) -> set[str]:
+    """The lowercased canonical ids that a crafting design produces.
+
+    A design entity is the recipe for exactly one output entity and records it
+    as ``outputId`` (a catalog key).  Ids with no design stay uncraftable.
+    """
+    designs = json.loads((src_dir / "designs.json").read_text(encoding="utf-8"))
+    return {d["outputId"].lower() for d in designs if d.get("outputId")}
+
+
 def _set_entry(catalog: dict, key: str, entry: dict) -> None:
     """Insert *entry* keyed by *key*; first writer wins (ids are unique)."""
     key = key.lower()
@@ -161,6 +183,13 @@ def build(src_dir: Path) -> dict:
         if mat.get("icon"):
             entry["icon"] = mat["icon"]
         _set_entry(catalog, mat_id, entry)
+
+    # An item is craftable when a design produces it.  Marking after every
+    # source is read also covers the materials that carry no `recipe` block.
+    for output_id in _design_outputs(src_dir):
+        entry = catalog.get(output_id)
+        if entry is not None:
+            entry["craftable"] = True
 
     return catalog
 

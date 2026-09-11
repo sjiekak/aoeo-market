@@ -61,8 +61,9 @@ aoeo_market/
                   login bundle and market sweep builders
   market.py       MarketPlaceItemInfo XML (UTF-8 and UTF-16) -> Listing
   catalog.py      curated item catalog (display name, authoritative rarity,
-                  kind, icon, …) keyed by marketplace id, with the suffix
-                  heuristic as fallback; data/catalog.json is its committed data
+                  kind, icon, craftability, …) keyed by marketplace id, with
+                  the suffix heuristic as fallback; data/catalog.json is its
+                  committed data
   observer.py     snapshot diff -> LISTED / REMOVED(expired|removed) events
   pcap_source.py  read listings from a .pcapng (offline data source)
   auth.py         TCP 4564 "Celeste Network" login (email+password -> session)

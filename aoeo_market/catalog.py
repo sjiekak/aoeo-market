@@ -5,7 +5,8 @@ ships a hand-curated item database that maps every *marketplace* listing id —
 the ``ItemID`` seen on the wire — to human-readable metadata: a display name,
 the authoritative rarity, the entity kind (advisor/blueprint/consumable/design/
 item/material), an icon id, and, where the source records it, the description,
-civilization, advisor age, and seasonal event.
+civilization, advisor age, seasonal event, and whether a crafting design
+produces the item (``craftable``).
 
 ``scripts/build_catalog.py`` flattens that database into the committed
 ``aoeo_market/data/catalog.json`` (keyed by the lowercased wire id), so the
@@ -76,11 +77,25 @@ def name_of(item_id: str) -> str | None:
     return entry.get("name") if entry else None
 
 
-def icon_fields(item_id: str) -> dict:
-    """The ``kind`` and ``icon`` needed to clip the item's sprite icon.
+def is_craftable(item_id: str) -> bool:
+    """Whether a crafting design produces this wire ``ItemID``.
 
-    Returns an empty dict when the catalog does not know the item, so callers
-    can merge it into a row without a lookup round-trip elsewhere.
+    True when the curated database holds a design whose ``outputId`` is the
+    item's canonical id — i.e. the item can be crafted.  Ids the catalog has
+    never seen, and items no design produces, are ``False``.
+    """
+    entry = lookup(item_id)
+    return bool(entry and entry.get("craftable"))
+
+
+def icon_fields(item_id: str) -> dict:
+    """The compact catalog extras merged into analytical row dicts.
+
+    ``kind`` and ``icon`` are what the front end needs to clip the item's
+    sprite icon; ``craftable`` rides along so every row that names an item
+    reports whether a design produces it.  Returns an empty dict when the
+    catalog does not know the item, so callers can merge it into a row without
+    a lookup round-trip elsewhere.
     """
     entry = lookup(item_id)
     if not entry:
@@ -90,6 +105,8 @@ def icon_fields(item_id: str) -> dict:
         out["kind"] = entry["kind"]
     if entry.get("icon") is not None:
         out["icon"] = entry["icon"]
+    if entry.get("craftable"):
+        out["craftable"] = True
     return out
 
 
@@ -98,7 +115,8 @@ def fields(item_id: str) -> dict:
 
     ``name`` is always present (``None`` when unknown, so callers can fall
     back to the raw id); every other field is omitted when the catalog has no
-    value for it, keeping the JSON API payloads lean.
+    value for it, keeping the JSON API payloads lean.  ``craftable`` is only
+    emitted for items a design produces.
     """
     entry = lookup(item_id)
     out: dict = {"name": entry.get("name") if entry else None}
@@ -106,4 +124,6 @@ def fields(item_id: str) -> dict:
         for key in ("kind", "icon", "description", "civilization", "age", "event"):
             if entry.get(key) is not None:
                 out[key] = entry[key]
+        if entry.get("craftable"):
+            out["craftable"] = True
     return out

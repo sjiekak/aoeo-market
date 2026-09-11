@@ -145,6 +145,7 @@ def _item_summary_schema() -> dict:
             "rarity_rank": {"type": "integer", "description": "Numeric rarity rank, higher = rarer; 0 when unknown."},
             "kind": {"type": "string", "description": "Entity kind (advisor / blueprint / consumable / design / item / material)."},
             "icon": {"type": "string", "description": "Sprite icon id."},
+            "craftable": {"type": "boolean", "description": "True when a crafting design produces this item; omitted when it does not."},
             "description": {"type": "string"},
             "civilization": {"type": "string"},
             "age": {"type": "string"},
