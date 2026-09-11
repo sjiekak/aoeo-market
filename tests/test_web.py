@@ -300,6 +300,19 @@ def test_listings_endpoint_params(tmp_path):
     assert body == b"[]"
 
 
+def test_listings_expose_absolute_utc_expiry(tmp_path):
+    """The read API returns the stored expiry as an ISO-8601 UTC instant next
+    to the wire countdown; the server computes it from captured_at."""
+    import json
+
+    _, _, body = app_for(tmp_path).handle("/api/listings")
+    row = json.loads(body)[0]
+    assert row["seconds_till_expiry"] == 90_000
+    # the latest seed snapshot was captured at 2000.0 -> 2000 + 90000
+    assert row["expires_at"] == "1970-01-02T01:33:20Z"
+    assert row["expires_at"].endswith("Z")  # always UTC
+
+
 def test_item_endpoint_and_404(tmp_path):
     app = app_for(tmp_path)
     status, _, body = app.handle("/api/item/Sword_U_III")

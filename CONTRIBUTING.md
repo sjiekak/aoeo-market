@@ -4,6 +4,7 @@
 
 - API contract should reuse the same standard model when returning multiple items (id, name, rarity, etc...)
 - Use concrete data types to manipulate a set of items (eg: python dataclasses over dict)
+- Time should be represented in UTC datetime format. At the exception of the webpage which uses browser timezone
 
 ## Coding Style
 
