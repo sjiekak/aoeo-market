@@ -37,9 +37,11 @@ function fmtPrice(n) {
 }
 const fmtInt = (n) => (n == null ? "—" : n.toLocaleString("en-US"));
 // Every instant is rendered in the browser's local timezone: UTC is the
-// representation the API speaks, not what the dashboard displays.
+// representation the API speaks, not what the dashboard displays. The en-GB
+// locale pins the day-first order (DD/MM/YYYY) and a 24-hour clock, instead of
+// the visitor's locale (en-US defaults to month-first and a 12-hour clock).
 const fmtLocal = (date) =>
-	date.toLocaleString(undefined, {
+	date.toLocaleString("en-GB", {
 		dateStyle: "short",
 		timeStyle: "short",
 	});

@@ -186,7 +186,8 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   say when it expired. It is stored as a plain UTC `TIMESTAMP` (no timezone
   attached); an upgraded database gets it for pre-existing snapshots by running
   `python -m aoeo_market.cli backfill --db market.db` once. The dashboard
-  renders every instant, this one included, in the browser's local timezone.
+  renders every instant, this one included, in the browser's local timezone,
+  day first and on a 24-hour clock (`en-GB`).
 - With one snapshot only, the "not on sale" and "recently removed" views are
   empty and the movers table says so — everything fills in from the second
   snapshot onwards.
