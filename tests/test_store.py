@@ -2,6 +2,8 @@
 
 from datetime import timedelta
 
+import duckdb
+
 from aoeo_market import store
 from aoeo_market.market import Listing
 
@@ -487,3 +489,74 @@ def test_median():
     assert store.median([7]) == 7.0
     assert store.median([1, 2]) == 1.5
     assert store.median([3, 1, 2]) == 2.0
+
+
+def test_listing_expiry_stored_as_absolute_utc(tmp_path):
+    """The snapshot preserves *when* a listing expires, not just the countdown
+    the wire carried: expires_at = captured_at + seconds_till_expiry, in UTC."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, expiry=90_000)], captured_at=1000.0)
+
+    row = store.active_listings(conn)[0]
+    assert row["seconds_till_expiry"] == 90_000  # the wire countdown is kept
+    assert row["expires_at"] == "1970-01-02T01:16:40Z"  # 1000 + 90000, UTC
+    conn.close()
+
+
+def test_vanished_listings_carry_absolute_expiry(tmp_path):
+    """The item-history and recently-removed rows expose the stored ABSOLUTE
+    expiry, so a disappeared listing can still say when it would have expired."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Gone_U_I", expiry=90_000)], captured_at=1000.0)
+    store.record_snapshot(conn, [], captured_at=2000.0)
+
+    assert store.price_history(conn, "Gone_U_I")["previous"][0]["expires_at"] == "1970-01-02T01:16:40Z"
+    assert store.recently_removed(conn)[0]["expires_at"] == "1970-01-02T01:16:40Z"
+    conn.close()
+
+
+def test_legacy_database_backfills_absolute_expiry(tmp_path):
+    """The backfill command fills a pre-existing database's rows from each
+    snapshot's captured_at; opening the store only adds the nullable column."""
+    path = tmp_path / "legacy.db"
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE TABLE snapshots (id BIGINT PRIMARY KEY, captured_at DOUBLE NOT NULL)")
+    conn.execute(
+        """
+        CREATE TABLE listings (
+            snapshot_id BIGINT NOT NULL, transaction_id BIGINT NOT NULL,
+            seller_empire_id BIGINT NOT NULL, buyer_character_id BIGINT NOT NULL,
+            item_id VARCHAR NOT NULL, item_type VARCHAR NOT NULL,
+            item_level BIGINT NOT NULL, item_count BIGINT NOT NULL,
+            item_price BIGINT NOT NULL, item_seed BIGINT NOT NULL,
+            seconds_till_expiry BIGINT NOT NULL,
+            PRIMARY KEY (snapshot_id, transaction_id)
+        )
+        """
+    )
+    conn.execute("INSERT INTO snapshots VALUES (1, 1000.0)")
+    conn.execute("INSERT INTO listings VALUES (1, 1, 7, -1, 'Sword_U_III', 'Trait', 1, 1, 100, 0, 90000)")
+    conn.execute("INSERT INTO listings VALUES (1, 2, 7, -1, 'Axe_R_I', 'Design', 1, 1, 50, 0, 500)")
+    conn.close()
+
+    conn = store.open_store(path)  # CREATE TABLE IF NOT EXISTS + ADD COLUMN
+    assert {r["expires_at"] for r in store.active_listings(conn)} == {None}
+    assert store.backfill_expires_at(conn) == 2
+    rows = {r["transaction_id"]: r for r in store.active_listings(conn)}
+    assert rows[1]["expires_at"] == "1970-01-02T01:16:40Z"  # 1000 + 90000
+    assert rows[2]["expires_at"] == "1970-01-01T00:25:00Z"  # 1000 + 500
+    conn.close()
+
+
+def test_backfill_is_idempotent(tmp_path):
+    """Rows already carrying an expiry (and a second run) are left untouched."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, expiry=90_000)], captured_at=1000.0)
+    before = store.active_listings(conn)[0]["expires_at"]
+    assert store.backfill_expires_at(conn) == 0  # nothing to fill
+    assert store.active_listings(conn)[0]["expires_at"] == before
+    conn.close()
+
+    conn = store.open_store(tmp_path / "m.db")  # reopening does not backfill
+    assert store.active_listings(conn)[0]["expires_at"] == before
+    conn.close()

@@ -36,14 +36,23 @@ function fmtPrice(n) {
 	return String(n);
 }
 const fmtInt = (n) => (n == null ? "—" : n.toLocaleString("en-US"));
-const fmtTime = (t) =>
-	t
-		? new Date(t * 1000).toLocaleString(undefined, {
-				dateStyle: "short",
-				timeStyle: "short",
-			})
-		: "—";
-const fmtDays = (s) => (s == null ? "—" : (s / 86400).toFixed(1) + "d");
+// Every instant is rendered in the browser's local timezone: UTC is the
+// representation the API speaks, not what the dashboard displays.
+const fmtLocal = (date) =>
+	date.toLocaleString(undefined, {
+		dateStyle: "short",
+		timeStyle: "short",
+	});
+const fmtTime = (t) => (t ? fmtLocal(new Date(t * 1000)) : "—");
+const fmtInstant = (iso) => (iso ? fmtLocal(new Date(iso)) : "—");
+// The stored absolute expiry is an ISO-8601 UTC instant; the cell shows how
+// long is left from now (past instants read "expired") and its title is the
+// local-time rendering. Rows recorded before the column existed are null.
+const fmtExpiry = (iso) => {
+	if (!iso) return "—";
+	const days = (Date.parse(iso) - Date.now()) / 86400000;
+	return days >= 0 ? days.toFixed(1) + "d" : "expired";
+};
 const fmtDur = (s) => {
 	if (s == null) return "—";
 	const h = s / 3600;
@@ -354,7 +363,7 @@ const LISTING_SORTS = {
 	level: (l) => l.item_level,
 	count: (l) => l.item_count,
 	price: (l) => l.unit_price,
-	expiry: (l) => l.seconds_till_expiry,
+	expiry: (l) => l.expires_at,
 	seller: (l) => String(l.seller_empire_id),
 };
 
@@ -411,7 +420,7 @@ function renderListings() {
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
         <td class="num">${fmtPrice(l.unit_price)}${l.item_count > 1 ? ` <span class="muted">(×${l.item_count})</span>` : ""}</td>
-        <td class="num">${fmtDays(l.seconds_till_expiry)}</td>
+        <td class="num" title="${esc(l.expires_at ? fmtInstant(l.expires_at) : "no absolute expiry stored")}">${fmtExpiry(l.expires_at)}</td>
         <td>${esc(String(l.seller_empire_id))}</td>
       </tr>`,
 		)
@@ -760,7 +769,7 @@ async function loadItem(itemId) {
         <td class="num">${fmtPrice(c.unit_price)}</td>
         <td class="num">${fmtPrice(c.item_price)}</td>
         <td class="num">${c.item_count}</td>
-        <td class="num">${fmtDays(c.seconds_till_expiry)}</td>
+        <td class="num" title="${esc(c.expires_at ? fmtInstant(c.expires_at) : "no absolute expiry stored")}">${fmtExpiry(c.expires_at)}</td>
         <td>${esc(String(c.seller_empire_id))}</td>
       </tr>`,
 			)

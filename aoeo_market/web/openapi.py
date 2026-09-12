@@ -17,7 +17,8 @@ schemas compose the two shared models with per-view metrics:
 * ``ItemSummary``  the curated identity attached to every row that names an
   item: display name, rarity/rank, and the optional catalog fields.
 * ``ListingRow``   one enriched listing of the latest snapshot: ``Listing`` +
-  ``ItemSummary`` + unit price and snapshot id.
+  ``ItemSummary`` + unit price, snapshot id and the stored absolute UTC
+  ``expires_at`` (read-side only — the wire record carries just the countdown).
 
 The **public** document describes the read API and the probes only — how
 market data is ingested is an internal detail and is deliberately omitted.
@@ -156,6 +157,24 @@ def _item_summary_schema() -> dict:
     )
 
 
+def _expires_at_property() -> dict:
+    """The stored absolute expiry attached to every row that carries a listing.
+
+    Not part of the wire ``Listing`` (the server sends only the countdown): the
+    store computes this UTC instant at capture and backfills it for snapshots
+    recorded before the column existed, so it is a read-side field.
+    """
+    return {
+        "type": "string",
+        "format": "date-time",
+        "nullable": True,
+        "description": (
+            "Absolute expiry instant in UTC, stored as a timezone-free TIMESTAMP and computed as "
+            "captured_at + seconds_till_expiry (backfilled for older snapshots)."
+        ),
+    }
+
+
 def _listing_row_schema() -> dict:
     """One enriched listing row of ``GET /api/listings`` (and item details)."""
     return _composed(
@@ -165,6 +184,7 @@ def _listing_row_schema() -> dict:
             {
                 "snapshot_id": {"type": "integer", "format": "int64", "description": "Snapshot the row was observed in."},
                 "unit_price": {"type": "number", "description": "item_price / item_count, rounded to cents — the price per unit."},
+                "expires_at": _expires_at_property(),
             },
             ["snapshot_id", "unit_price"],
             strict=False,
@@ -307,6 +327,7 @@ def _removed_listing_schema() -> dict:
                 "unit_price": {"type": "number", "description": "item_price / item_count, rounded to cents."},
                 "reason": _ref("RemovalReason"),
                 "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
+                "expires_at": _expires_at_property(),
             },
             ["unit_price", "reason", "vanished_at"],
             strict=False,
@@ -330,6 +351,7 @@ def _previous_listing_schema() -> dict:
                 "last_seen": {"type": "number", "description": "Unix seconds of the last snapshot the listing appears in."},
                 "vanished_at": {"type": "number", "description": "Unix seconds of the first snapshot where the listing is absent."},
                 "reason": _ref("RemovalReason"),
+                "expires_at": _expires_at_property(),
             },
             ["unit_price", "first_seen", "last_seen", "vanished_at", "reason"],
             strict=False,

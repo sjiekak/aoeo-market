@@ -6,6 +6,7 @@ uv run python -m aoeo_market.cli fetch               # read the live market
 uv run python -m aoeo_market.cli fetch  --watch      # stream events
 uv run python -m aoeo_market.cli fetch  --store --quiet  # snapshot -> market.db
 uv run python -m aoeo_market.cli init-db             # create the database (schema only)
+uv run python -m aoeo_market.cli backfill            # fill expires_at on pre-existing snapshots
 
 The live commands detect your local IPv4 address as the default; pass
 ``--local-ip <ip>`` to override it.  ``fetch --store`` persists every fetched
@@ -83,6 +84,26 @@ def _init_db(args: argparse.Namespace) -> int:
     count = store.snapshot_count(conn)
     conn.close()
     print(f"initialized {args.db} ({count} snapshot{'s' if count != 1 else ''} present)")
+    return 0
+
+
+def _backfill(args: argparse.Namespace) -> int:
+    """One-shot: fill the absolute expiry of snapshots recorded before the column.
+
+    The web server never does this implicitly, so an upgraded database runs it
+    once (the init container's ``init-db`` only adds the column).
+    """
+    from . import store
+
+    conn = store.open_store(args.db)
+    try:
+        filled = store.backfill_expires_at(conn)
+    finally:
+        conn.close()
+    if filled:
+        print(f"backfilled absolute expiry for {filled} listing{'s' if filled != 1 else ''} in {args.db}")
+    else:
+        print(f"{args.db} is already up to date (no listings missing an absolute expiry)")
     return 0
 
 
@@ -262,6 +283,10 @@ def main(argv: list[str] | None = None) -> int:
     i = sub.add_parser("init-db", help="create the DuckDB snapshot database (schema only, idempotent)")
     i.add_argument("--db", default="market.db", help="path to the database file (default market.db)")
     i.set_defaults(func=_init_db)
+
+    b = sub.add_parser("backfill", help="one-shot: fill the absolute expires_at of snapshots stored before the column existed")
+    b.add_argument("--db", default="market.db", help="path to the database file (default market.db)")
+    b.set_defaults(func=_backfill)
 
     r = sub.add_parser("replay", help="diff two captures into market events")
     r.add_argument("first")

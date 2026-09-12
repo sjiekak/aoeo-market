@@ -15,9 +15,21 @@ file at once); only the cron writer takes the read-write connection, and
 Schema::
 
     snapshots(id BIGINT PK, captured_at DOUBLE)        -- one row per fetch
-    listings(snapshot_id, transaction_id, ...)         -- active listings per snapshot
+    listings(snapshot_id, transaction_id, ...,         -- active listings per snapshot
+             seconds_till_expiry BIGINT,               -- server countdown at capture
+             expires_at TIMESTAMP)                     -- absolute expiry (UTC)
 
-All times are Unix timestamps (UTC seconds).
+``seconds_till_expiry`` is what the wire record carries — a countdown relative
+to the moment of capture — so on its own it cannot say *when* a listing
+expires.  Every snapshot therefore also stores ``expires_at``, the absolute
+instant computed at capture as ``captured_at + seconds_till_expiry``.  It is a
+plain ``TIMESTAMP`` — no timezone is stored — whose wall clock is always UTC;
+every read projects it as an ISO-8601 UTC string, so a snapshot preserves the
+expiry regardless of the host's local timezone.  Snapshots recorded before the
+column existed are filled by the one-shot
+``aoeo_market.cli backfill`` command.
+
+All other times are Unix timestamps (UTC seconds).
 """
 
 from __future__ import annotations
@@ -56,13 +68,62 @@ _SCHEMA_STATEMENTS = (
         item_price BIGINT NOT NULL,
         item_seed BIGINT NOT NULL,
         seconds_till_expiry BIGINT NOT NULL,
+        expires_at TIMESTAMP,
         PRIMARY KEY (snapshot_id, transaction_id)
     )
     """,
+    # Databases created before the absolute expiry column existed are upgraded
+    # in place: the column is added nullable here, and the one-shot
+    # ``aoeo_market.cli backfill`` command fills it for the existing rows.
+    "ALTER TABLE listings ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
     "CREATE INDEX IF NOT EXISTS idx_listings_item_price ON listings(item_id, item_price)",
     "CREATE INDEX IF NOT EXISTS idx_listings_snapshot ON listings(snapshot_id)",
     "CREATE INDEX IF NOT EXISTS idx_listings_item_type ON listings(item_type)",
 )
+
+# Backfill of the absolute expiry for listings stored before the column existed:
+# a listing's expiry is the snapshot's capture time plus the countdown it
+# carried, so the historical rows get exactly the instant new ones store.  The
+# explicit AT TIME ZONE 'UTC' keeps the naive TIMESTAMP on the UTC wall clock.
+_BACKFILL_EXPIRES_AT = """
+    UPDATE listings
+    SET expires_at = to_timestamp(s.captured_at + listings.seconds_till_expiry) AT TIME ZONE 'UTC'
+    FROM snapshots AS s
+    WHERE s.id = listings.snapshot_id AND listings.expires_at IS NULL
+"""
+
+# ``expires_at`` is a naive UTC TIMESTAMP, so no timezone is stored with it.
+# The session default is still pinned to UTC defensively, so any timezone-aware
+# expression (or a database upgraded from an earlier TIMESTAMPTZ column) reads
+# and writes UTC rather than the host's local zone.
+_UTC_TIMEZONE = "SET TimeZone='UTC'"
+
+_EXPIRES_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _expires_at(alias: str = "") -> str:
+    """SQL projection of the naive-UTC expiry as canonical ISO-8601 text."""
+    return f"strftime({alias + '.' if alias else ''}expires_at, '{_EXPIRES_AT_FORMAT}') AS expires_at"
+
+
+def _listing_columns(alias: str = "") -> str:
+    """``SELECT`` projection of a full listing row plus its UTC absolute expiry."""
+    col = f"{alias}." if alias else ""
+    stored = (
+        "snapshot_id",
+        "transaction_id",
+        "seller_empire_id",
+        "buyer_character_id",
+        "item_id",
+        "item_type",
+        "item_level",
+        "item_count",
+        "item_price",
+        "item_seed",
+        "seconds_till_expiry",
+    )
+    return ", ".join([*(f"{col}{name}" for name in stored), _expires_at(alias)])
+
 
 # One day: the observer's expiry window — a listing that vanishes with less
 # than this left on its countdown is read as EXPIRED, otherwise sold/withdrawn.
@@ -70,6 +131,28 @@ EXPIRY_WINDOW_SECONDS = 86400.0
 
 _LOCK_ATTEMPTS = 30
 _LOCK_DELAY = 0.1  # seconds; the writer's exclusive lock is held for milliseconds
+
+
+def backfill_expires_at(conn: duckdb.DuckDBPyConnection) -> int:
+    """Fill ``expires_at`` for listings stored before the column existed.
+
+    Each row's instant is its snapshot's ``captured_at`` plus the countdown the
+    listing carried, so the backfilled history matches what a capture stores
+    today.  Run once as ``aoeo_market.cli backfill``; it is idempotent and
+    returns immediately when no listing has a NULL expiry.  Returns the number
+    of rows filled.
+    """
+    if conn.execute("SELECT 1 FROM listings WHERE expires_at IS NULL LIMIT 1").fetchone() is None:
+        return 0
+    pending = int(conn.execute("SELECT COUNT(*) FROM listings WHERE expires_at IS NULL").fetchone()[0])
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        conn.execute(_BACKFILL_EXPIRES_AT)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return pending
 
 
 def open_store(path: str | os.PathLike, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
@@ -87,6 +170,7 @@ def open_store(path: str | os.PathLike, *, read_only: bool = False) -> duckdb.Du
     for _ in range(_LOCK_ATTEMPTS):
         try:
             conn = duckdb.connect(path, read_only=read_only)
+            conn.execute(_UTC_TIMEZONE)
             if not read_only:
                 for stmt in _SCHEMA_STATEMENTS:
                     conn.execute(stmt)
@@ -106,6 +190,7 @@ def open_memory() -> duckdb.DuckDBPyConnection:
     dashboard renders its empty state instead of erroring.
     """
     conn = duckdb.connect(":memory:")
+    conn.execute(_UTC_TIMEZONE)
     for stmt in _SCHEMA_STATEMENTS:
         conn.execute(stmt)
     return conn
@@ -134,7 +219,12 @@ def record_snapshot(
     listings: Iterable[Listing],
     captured_at: float | None = None,
 ) -> int:
-    """Append one snapshot of *listings* and return its snapshot id."""
+    """Append one snapshot of *listings* and return its snapshot id.
+
+    Each listing stores its absolute UTC expiry, computed here as
+    ``captured_at + seconds_till_expiry`` so the snapshot preserves *when* the
+    listing expires rather than only the countdown the wire happened to carry.
+    """
     if captured_at is None:
         captured_at = time.time()
     rows = [
@@ -149,6 +239,7 @@ def record_snapshot(
             l.item_price,
             l.item_seed,
             l.seconds_till_expiry,
+            captured_at + l.seconds_till_expiry,
         )
         for l in listings
     ]
@@ -160,7 +251,7 @@ def record_snapshot(
         snapshot_id = conn.execute("INSERT INTO snapshots(captured_at) VALUES (?) RETURNING id", [captured_at]).fetchone()[0]
         if rows:
             conn.executemany(
-                "INSERT INTO listings VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO listings VALUES (?,?,?,?,?,?,?,?,?,?,?, to_timestamp(?) AT TIME ZONE 'UTC')",
                 [(snapshot_id, *row) for row in rows],
             )
         conn.execute("COMMIT")
@@ -250,7 +341,7 @@ def active_listings(
     col = _SORT_COLUMNS.get(sort, "item_price")
     if direction not in ("asc", "desc"):
         direction = "asc"
-    rows = _rows(conn, f"SELECT * FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
+    rows = _rows(conn, f"SELECT {_listing_columns()} FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
     out = [_listing_dict(r) for r in rows]
     if q:
         # Applied after enrichment so the display name is searchable too; the
@@ -444,8 +535,8 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     """
     rows = _rows(
         conn,
-        """
-        SELECT l.*, s.captured_at AS t
+        f"""
+        SELECT {_listing_columns("l")}, s.captured_at AS t
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
         WHERE l.item_id = ?
         ORDER BY s.id, l.item_price
@@ -524,6 +615,7 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
                 "item_price": row["item_price"],
                 "item_seed": row["item_seed"],
                 "seconds_till_expiry": row["seconds_till_expiry"],
+                "expires_at": row["expires_at"],
                 "unit_price": round(row["item_price"] / max(row["item_count"], 1), 2),
                 "first_seen": t["first_seen"],
                 "last_seen": row["t"],
@@ -671,8 +763,8 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
             return []
         gone = _rows(
             conn,
-            """
-            SELECT l.*, s.captured_at AS last_seen
+            f"""
+            SELECT {_listing_columns("l")}, s.captured_at AS last_seen
             FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
             WHERE l.snapshot_id = ? AND l.transaction_id NOT IN (
                 SELECT transaction_id FROM listings WHERE snapshot_id = ?
@@ -686,7 +778,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
         window_start = latest["captured_at"] - window.total_seconds()
         gone = _rows(
             conn,
-            """
+            f"""
             WITH vanished AS (
                 SELECT transaction_id, MAX(snapshot_id) AS last_sid
                 FROM listings
@@ -700,7 +792,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
                        (SELECT MIN(id) FROM snapshots WHERE id > last_sid) AS vanish_sid
                 FROM vanished
             )
-            SELECT l.*, s.captured_at AS last_seen, vs.captured_at AS vanished_at
+            SELECT {_listing_columns("l")}, s.captured_at AS last_seen, vs.captured_at AS vanished_at
             FROM vtimes v
             JOIN listings l ON l.snapshot_id = v.last_sid AND l.transaction_id = v.transaction_id
             JOIN snapshots s ON s.id = v.last_sid
@@ -731,6 +823,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
                 "item_price": g["item_price"],
                 "item_seed": g["item_seed"],
                 "seconds_till_expiry": g["seconds_till_expiry"],
+                "expires_at": g["expires_at"],
                 "rarity": rar[1] if rar else None,
                 "rarity_rank": rar[0] if rar else 0,
                 "unit_price": round(g["item_price"] / max(g["item_count"], 1), 2),
