@@ -110,6 +110,15 @@ function makeChart(canvasId, config) {
 	charts[canvasId] = new Chart($(canvasId), config);
 }
 
+// The time-series charts (market supply, item price history) share one x axis:
+// epoch-milliseconds on a linear scale, tick labels in local time, and the tick
+// count left to Chart.js so both render the same axis. A fresh object per chart
+// keeps Chart.js from mutating a config shared between two instances.
+const timeAxis = () => ({
+	type: "linear",
+	ticks: { callback: (v) => fmtTime(v / 1000) },
+});
+
 /* --- column sorting (shared by every sortable tab) ----------------------- */
 
 // Every sortable column cycles through three states when its header is
@@ -248,10 +257,7 @@ async function loadOverview() {
 		},
 		options: {
 			scales: {
-				x: {
-					type: "linear",
-					ticks: { callback: (v) => fmtTime(v / 1000), maxTicksLimit: 10 },
-				},
+				x: timeAxis(),
 				y: { beginAtZero: true },
 			},
 			plugins: {
@@ -737,10 +743,7 @@ async function loadItem(itemId) {
 		},
 		options: {
 			scales: {
-				x: {
-					type: "linear",
-					ticks: { callback: (v) => fmtTime(v / 1000) },
-				},
+				x: timeAxis(),
 				y: { beginAtZero: true },
 			},
 			plugins: {
