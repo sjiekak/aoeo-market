@@ -37,20 +37,24 @@ function fmtPrice(n) {
 }
 const fmtInt = (n) => (n == null ? "—" : n.toLocaleString("en-US"));
 // Every instant is rendered in the browser's local timezone: UTC is the
-// representation the API speaks, not what the dashboard displays.
+// representation the API speaks, not what the dashboard displays. The en-GB
+// locale pins the day-first order (DD/MM/YYYY) and a 24-hour clock, instead of
+// the visitor's locale (en-US defaults to month-first and a 12-hour clock).
 const fmtLocal = (date) =>
-	date.toLocaleString(undefined, {
+	date.toLocaleString("en-GB", {
 		dateStyle: "short",
 		timeStyle: "short",
 	});
 const fmtTime = (t) => (t ? fmtLocal(new Date(t * 1000)) : "—");
 const fmtInstant = (iso) => (iso ? fmtLocal(new Date(iso)) : "—");
 // The stored absolute expiry is an ISO-8601 UTC instant; the cell shows how
-// long is left from now (past instants read "expired") and its title is the
-// local-time rendering. Rows recorded before the column existed are null.
-const fmtExpiry = (iso) => {
+// long is left as of *now* (past instants read "expired") and its title is the
+// local-time rendering. Callers pass one `now` for a whole render pass so the
+// clock is read once per table, not once per row. Rows recorded before the
+// column existed are null.
+const fmtExpiry = (iso, now) => {
 	if (!iso) return "—";
-	const days = (Date.parse(iso) - Date.now()) / 86400000;
+	const days = (Date.parse(iso) - now) / 86400000;
 	return days >= 0 ? days.toFixed(1) + "d" : "expired";
 };
 const fmtDur = (s) => {
@@ -105,6 +109,15 @@ function makeChart(canvasId, config) {
 	if (charts[canvasId]) charts[canvasId].destroy();
 	charts[canvasId] = new Chart($(canvasId), config);
 }
+
+// The time-series charts (market supply, item price history) share one x axis:
+// epoch-milliseconds on a linear scale, tick labels in local time, and the tick
+// count left to Chart.js so both render the same axis. A fresh object per chart
+// keeps Chart.js from mutating a config shared between two instances.
+const timeAxis = () => ({
+	type: "linear",
+	ticks: { callback: (v) => fmtTime(v / 1000) },
+});
 
 /* --- column sorting (shared by every sortable tab) ----------------------- */
 
@@ -244,10 +257,7 @@ async function loadOverview() {
 		},
 		options: {
 			scales: {
-				x: {
-					type: "linear",
-					ticks: { callback: (v) => fmtTime(v / 1000), maxTicksLimit: 10 },
-				},
+				x: timeAxis(),
 				y: { beginAtZero: true },
 			},
 			plugins: {
@@ -412,6 +422,7 @@ function renderListings() {
 		);
 	$("#ls-count").textContent =
 		`${rows.length} / ${listingsCache.length} listings`;
+	const now = Date.now();
 	$("#listings-body").innerHTML = rows
 		.map(
 			(l) => `<tr>
@@ -420,7 +431,7 @@ function renderListings() {
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
         <td class="num">${fmtPrice(l.unit_price)}${l.item_count > 1 ? ` <span class="muted">(×${l.item_count})</span>` : ""}</td>
-        <td class="num" title="${esc(l.expires_at ? fmtInstant(l.expires_at) : "no absolute expiry stored")}">${fmtExpiry(l.expires_at)}</td>
+        <td class="num" title="${esc(l.expires_at ? fmtInstant(l.expires_at) : "no absolute expiry stored")}">${fmtExpiry(l.expires_at, now)}</td>
         <td>${esc(String(l.seller_empire_id))}</td>
       </tr>`,
 		)
@@ -732,10 +743,7 @@ async function loadItem(itemId) {
 		},
 		options: {
 			scales: {
-				x: {
-					type: "linear",
-					ticks: { callback: (v) => fmtTime(v / 1000) },
-				},
+				x: timeAxis(),
 				y: { beginAtZero: true },
 			},
 			plugins: {
@@ -762,6 +770,7 @@ async function loadItem(itemId) {
 		},
 	});
 
+	const now = Date.now();
 	$("#item-current").innerHTML =
 		cur
 			.map(
@@ -769,7 +778,7 @@ async function loadItem(itemId) {
         <td class="num">${fmtPrice(c.unit_price)}</td>
         <td class="num">${fmtPrice(c.item_price)}</td>
         <td class="num">${c.item_count}</td>
-        <td class="num" title="${esc(c.expires_at ? fmtInstant(c.expires_at) : "no absolute expiry stored")}">${fmtExpiry(c.expires_at)}</td>
+        <td class="num" title="${esc(c.expires_at ? fmtInstant(c.expires_at) : "no absolute expiry stored")}">${fmtExpiry(c.expires_at, now)}</td>
         <td>${esc(String(c.seller_empire_id))}</td>
       </tr>`,
 			)
