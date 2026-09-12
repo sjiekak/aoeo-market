@@ -61,6 +61,24 @@ def test_index_and_static_files(tmp_path):
     assert status == 404
 
 
+def test_item_pages_serve_the_dashboard_shell(tmp_path):
+    """Every item has its own page URL: /item/<item_id> answers with the shell
+    and the client opens the item view from the path."""
+    app = app_for(tmp_path)
+    status, ctype, body = app.handle("/item/Xerxes_L_IV")
+    assert status == 200
+    assert "text/html" in ctype
+    assert b"<!doctype html>" in body
+    assert b"/static/app.js" in body  # the shell bootstraps the item view
+    # the id is not resolved server-side, so any item (or unknown one) gets the
+    # shell; the client's API call renders the item or its not-found state
+    assert app.handle("/item/4PureGoldIngot")[0] == 200
+    assert app.handle("/item/never-seen")[0] == 200
+    # the bare prefix (and the prefix without a slash) is not a page
+    assert app.handle("/item/")[0] == 404
+    assert app.handle("/item")[0] == 404
+
+
 def test_readyz_with_database(tmp_path):
     import json
 

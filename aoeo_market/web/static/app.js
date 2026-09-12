@@ -81,7 +81,7 @@ const esc = (s) =>
 function itemLink(itemId, name) {
 	const label = name || itemId;
 	const title = name ? ` title="${esc(itemId)}"` : "";
-	return `<a href="#item/${encodeURIComponent(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
+	return `<a href="/item/${encodeURIComponent(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
 }
 
 function rarityBadge(name) {
@@ -187,7 +187,12 @@ function showTab(name) {
 document.querySelectorAll("nav button").forEach((b) => {
 	b.addEventListener("click", () => {
 		if (b.dataset.tab === "item") return;
-		history.replaceState(null, "", window.location.pathname);
+		// An item lives on its own page, so a tab click leaves it for the
+		// dashboard URL (without a reload) before switching the view.
+		if (itemIdFromPath() !== null) {
+			history.pushState(null, "", "/");
+			$("#nav-item").hidden = true;
+		}
 		showTab(b.dataset.tab);
 	});
 });
@@ -699,6 +704,8 @@ function renderItemImage(it) {
 
 async function loadItem(itemId) {
 	const it = await api("/api/item/" + encodeURIComponent(itemId));
+	// Each item is its own page, so it gets its own document title.
+	document.title = `${it.name || it.item_id} — AoEO Market`;
 	$("#item-title").textContent = it.name || it.item_id;
 	const nav = it.name || it.item_id;
 	$("#nav-item").textContent = nav.length > 24 ? nav.slice(0, 24) + "…" : nav;
@@ -803,33 +810,51 @@ async function loadItem(itemId) {
 }
 
 $("#item-back").addEventListener("click", () => {
-	history.replaceState(null, "", window.location.pathname);
-	showTab("listings");
+	// Item links are real navigations, so the dashboard is normally one history
+	// step back; a directly opened (shared) page falls back to the dashboard.
+	if (document.referrer.startsWith(`${window.location.origin}/`)) window.history.back();
+	else window.location.href = "/";
 });
 
 /* --- router + boot ------------------------------------------------------- */
 
-function route() {
-	const hash = decodeURIComponent(window.location.hash);
-	if (hash.startsWith("#item/")) {
-		const itemId = hash.slice("#item/".length);
-		$("#nav-item").hidden = false;
-		$("#nav-item").textContent =
-			itemId.length > 24 ? itemId.slice(0, 24) + "…" : itemId;
-		showTab("item");
-		loadItem(itemId).catch((e) => {
-			$("#item-title").textContent = "error";
-			$("#item-meta").textContent = e.message;
-		});
-	} else {
-		$("#nav-item").hidden = true;
-		showTab("overview");
+// Every item has its own page at /item/<item_id>: the server answers that path
+// with this shell and the router opens the item view from the URL, so item pages
+// are shareable and the browser's own back/forward buttons work.
+const ITEM_PREFIX = "/item/";
+
+function itemIdFromPath() {
+	const path = window.location.pathname;
+	if (!path.startsWith(ITEM_PREFIX)) return null;
+	try {
+		return decodeURIComponent(path.slice(ITEM_PREFIX.length)) || null;
+	} catch {
+		return null; // malformed percent-escape: not an item page
 	}
 }
-window.addEventListener("hashchange", route);
+
+function route() {
+	const itemId = itemIdFromPath();
+	if (itemId === null) {
+		$("#nav-item").hidden = true;
+		showTab("overview");
+		return;
+	}
+	$("#nav-item").hidden = false;
+	$("#nav-item").textContent =
+		itemId.length > 24 ? itemId.slice(0, 24) + "…" : itemId;
+	showTab("item");
+	loadItem(itemId).catch((e) => {
+		document.title = "Item not found — AoEO Market";
+		$("#item-title").textContent = "not found";
+		$("#item-meta").textContent = e.message;
+	});
+}
 
 async function boot() {
 	await loadSprites(); // icon positions are needed by every table that renders a name
+	// The dashboard tabs are part of the shell even on an item page, so their
+	// data is loaded either way — only the view route() opens differs.
 	const data = loadOverview().catch((e) => console.error(e));
 	const listings = loadListings().catch((e) => console.error(e));
 	await Promise.all([data, listings]);
