@@ -69,6 +69,19 @@ _LISTING_FIELDS = (
     "seconds_till_expiry",
 )
 
+# Every item has its own page URL under this prefix. The dashboard shell answers
+# it and the client opens the matching item view from the path (see
+# ``static/app.js``), so an item link is a real page rather than a hash fragment.
+_ITEM_PREFIX = "/item/"
+
+
+def _serves_dashboard(path: str) -> bool:
+    """True for the dashboard shell and for an item's own page URL.
+
+    ``/item/`` without an id is not a page, so it falls through to the 404.
+    """
+    return path in ("/", "/index.html") or (path.startswith(_ITEM_PREFIX) and len(path) > len(_ITEM_PREFIX))
+
 
 class _BadParam(ValueError):
     """Malformed query parameter — reported as HTTP 400."""
@@ -95,7 +108,7 @@ class WebApp:
                 return 200, _JSON, b'{"status": "ok"}'
             if path == "/readyz":
                 return self._readyz()
-            if path in ("/", "/index.html"):
+            if _serves_dashboard(path):
                 return 200, _STATIC_TYPES[".html"], (STATIC_DIR / "index.html").read_bytes()
             if path.startswith("/static/"):
                 return self._static(path[len("/static/") :])

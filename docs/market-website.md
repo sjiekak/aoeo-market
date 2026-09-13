@@ -112,16 +112,22 @@ The intended deployment puts both components in one namespace:
 | Tab | What it shows |
 |---|---|
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
-| **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Click an item to open its detail view. |
+| **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
 | **Best value** | Items ranked by **value for their rarity**: how cheap an item trades relative to the typical price of its rarity tier (a 2× ratio means half the typical price). Orderable by ratio, price, "cheaper than %" percentile and more; a bar chart shows the ten best. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
-| **Item detail** | Full price history of one item — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
+| **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
 
 Every sortable table shares one interaction: click a column header to sort
 min-first (↑), click it again for max-first (↓), and a third time to return
 to the unsorted order. Clicking a different column starts it min-first.
+
+Each item also has its own HTML page at `GET /item/<item_id>`: the server
+answers that path with the dashboard shell and the front-end opens the item
+view from the URL, so item links are real, shareable pages (with the item's
+name as the document title) rather than `#` fragments. An unknown id still
+returns the shell; the page then reports that the item was never observed.
 
 ## JSON API
 
