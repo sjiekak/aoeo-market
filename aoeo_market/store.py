@@ -614,13 +614,17 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         f"""
         SELECT {_listing_columns("l")}, s.captured_at AS t
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
-        WHERE l.item_id = ?
+        WHERE lower(l.item_id) = lower(?)
         ORDER BY s.id, l.item_price
         """,
         [item_id],
     )
     if not rows:
         return None
+    # Wire item ids are case-insensitive (the catalog and the Dismantler map key
+    # everything lowercased while listings keep the server's spelling), so adopt
+    # the stored one and every downstream lookup and the returned id agree.
+    item_id = rows[0]["item_id"]
 
     latest = latest_snapshot(conn)
     active_txs: set[int] = set()

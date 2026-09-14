@@ -78,10 +78,16 @@ const esc = (s) =>
 			],
 	);
 
+// Wire item ids are case-insensitive (listings keep the server's spelling while
+// the catalog and the Dismantler map key everything lowercased), and the API
+// resolves either case — so every generated path is lowercase and the same item
+// always has one URL.
+const itemHref = (itemId) => `/item/${encodeURIComponent(String(itemId).toLowerCase())}`;
+
 function itemLink(itemId, name) {
 	const label = name || itemId;
 	const title = name ? ` title="${esc(itemId)}"` : "";
-	return `<a href="/item/${encodeURIComponent(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
+	return `<a href="${itemHref(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
 }
 
 function rarityBadge(name) {
@@ -662,7 +668,7 @@ function materialIconLink(row) {
 	const name = row.name || row.item_id;
 	const icon = itemIconHtml(row.kind, row.icon);
 	if (!icon) return "";
-	return `<a href="/item/${encodeURIComponent(row.item_id)}" class="material-icon" title="${esc(name)}">${icon}</a>`;
+	return `<a href="${itemHref(row.item_id)}" class="material-icon" title="${esc(name)}">${icon}</a>`;
 }
 
 function renderRecipe(recipe) {

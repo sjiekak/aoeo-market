@@ -566,3 +566,26 @@ def test_event_items_are_not_dismantlable(tmp_path):
     assert plain["dismantle"]["type"] == "Reinforced Construction"
     assert plain["dismantle"]["rarity"] == "Legendary"
     conn.close()
+
+
+def test_item_lookup_is_case_insensitive(tmp_path):
+    """Listings keep the server's spelling; the API accepts any case.
+
+    The catalog and the Dismantler map key ids lowercased while the wire keeps
+    mixed case, so a lowercased link (e.g. from a recipe's ingredients) must
+    still resolve — and report the canonical id back.
+    """
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="4IlluminatedCodex", item_type="Material", price=50)],
+        captured_at=1000.0,
+    )
+
+    lower = store.price_history(conn, "4illuminatedcodex")
+    assert lower["item_id"] == "4IlluminatedCodex"
+    assert lower["points"][0]["price"] == 50.0
+    assert len(lower["current"]) == 1
+
+    assert store.price_history(conn, "4ILLUMINATEDCODEX")["item_id"] == "4IlluminatedCodex"
+    conn.close()
