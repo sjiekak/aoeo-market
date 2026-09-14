@@ -27,7 +27,6 @@
 				</button>
 				<button type="button" data-tab="listings">Listings</button>
 				<button type="button" data-tab="best-sellers">Best sellers</button>
-				<button type="button" data-tab="best-value">Best value</button>
 				<button type="button" data-tab="not-on-sale">Not on sale</button>
 				<button type="button" data-tab="removed">Recently removed</button>
 				<button type="button" data-tab="item" id="nav-item" hidden>Item</button>
@@ -201,77 +200,6 @@
 								</tr>
 							</thead>
 							<tbody id="best-body"></tbody>
-						</table>
-					</div>
-				</div>
-			</section>
-
-			<!-- Best value -->
-			<section id="tab-best-value" hidden>
-				<p class="muted">
-					Value for rarity: each rarity tier's reference price is the median of
-					its items' historical median prices. Value ratio = reference ÷ price
-					(current median while on sale, historical median otherwise) — 2× means
-					half the typical price of its rarity. Items without a rarity tag are
-					excluded. Click a column header to sort: min first (↑), then max (↓),
-					then unsorted.
-				</p>
-				<div class="grid-2">
-					<div class="card chart-card">
-						<h2>
-							Top 10 value (× cheaper than the typical price of their rarity)
-						</h2>
-						<canvas id="chart-best-value"></canvas>
-					</div>
-					<div class="card">
-						<h2>Best value by rarity</h2>
-						<table>
-							<thead>
-								<tr>
-									<th><button type="button" data-order="item">Item</button></th>
-									<th><button type="button" data-order="type">Type</button></th>
-									<th class="num">
-										<button type="button" data-order="level">Lvl</button>
-									</th>
-									<th>
-										<button type="button" data-order="rarity">Rarity</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="value_ratio">
-											Value ratio
-										</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="median_unit_price">
-											Typical/unit (hist.)
-										</button>
-									</th>
-									<th class="num">
-										<button
-											type="button"
-											data-order="current_median_unit_price"
-										>
-											Now/unit (median)
-										</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="current_min_unit_price">
-											Now/unit (min)
-										</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="cheaper_than_pct">
-											Cheaper than
-										</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="active_count">
-											On sale
-										</button>
-									</th>
-								</tr>
-							</thead>
-							<tbody id="value-body"></tbody>
 						</table>
 					</div>
 				</div>

@@ -175,6 +175,26 @@ function orderQuery(order, dir) {
 
 /* --- tabs ---------------------------------------------------------------- */
 
+// Each tab fetches its data the first time it is shown, so a page that only
+// needs one view — the default overview, or an item page — never pays for the
+// others. The loaders are function declarations, so referring to them here is
+// safe even though they are defined further down.
+const TAB_LOADERS = {
+	overview: loadOverview,
+	listings: loadListings,
+	"best-sellers": loadBestSellersTab,
+	"not-on-sale": loadNotOnSale,
+	removed: loadRemoved,
+};
+const loadedTabs = new Set();
+
+function loadTab(name) {
+	const load = TAB_LOADERS[name];
+	if (!load || loadedTabs.has(name)) return;
+	loadedTabs.add(name);
+	load().catch((e) => console.error(e));
+}
+
 function showTab(name) {
 	document.querySelectorAll("main > section").forEach((s) => {
 		s.hidden = s.id !== `tab-${name}`;
@@ -182,6 +202,7 @@ function showTab(name) {
 	document.querySelectorAll("nav button").forEach((b) => {
 		b.classList.toggle("active", b.dataset.tab === name);
 	});
+	loadTab(name);
 }
 
 document.querySelectorAll("nav button").forEach((b) => {
@@ -448,8 +469,7 @@ $("#ls-type").addEventListener("change", renderListings);
 
 /* --- best sellers -------------------------------------------------------- */
 
-async function loadBestSellersChart() {
-	const rows = await api("/api/best-sellers?order=median_time&dir=asc");
+function renderBestSellersChart(rows) {
 	const top = rows.slice(0, 10).reverse(); // fastest at the top
 	makeChart("#chart-best-sellers", {
 		type: "bar",
@@ -479,10 +499,7 @@ async function loadBestSellersChart() {
 	});
 }
 
-async function loadBestSellers() {
-	const rows = await api(
-		"/api/best-sellers" + orderQuery(bestSort.order, bestSort.dir),
-	);
+function renderBestSellers(rows) {
 	$("#best-body").innerHTML =
 		rows
 			.map(
@@ -504,79 +521,29 @@ async function loadBestSellers() {
 		'<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as more data is collected</td></tr>';
 }
 
+async function loadBestSellers() {
+	const rows = await api(
+		"/api/best-sellers" + orderQuery(bestSort.order, bestSort.dir),
+	);
+	renderBestSellers(rows);
+}
+
+// The chart always shows the ten fastest (median_time, asc); while the table
+// still sits at that default sort, one request feeds both.
+async function loadBestSellersTab() {
+	const rows = await api("/api/best-sellers?order=median_time&dir=asc");
+	renderBestSellersChart(rows);
+	if (bestSort.order === "median_time" && bestSort.dir === "asc") {
+		renderBestSellers(rows);
+	} else {
+		await loadBestSellers();
+	}
+}
+
 const bestSort = wireColumnSort("best-sellers", {
 	order: "median_time",
 	dir: "asc",
 	apply: loadBestSellers,
-});
-
-/* --- best value ---------------------------------------------------------- */
-
-const fmtRatio = (r) =>
-	r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×";
-
-async function loadBestValueChart() {
-	const rows = await api("/api/best-value?order=value_ratio&dir=desc");
-	const top = rows.slice(0, 10).reverse();
-	makeChart("#chart-best-value", {
-		type: "bar",
-		data: {
-			labels: top.map((r) => {
-				const label = r.name || r.item_id;
-				return label.length > 26 ? label.slice(0, 26) + "…" : label;
-			}),
-			datasets: [
-				{
-					label: "value ratio",
-					data: top.map((r) => r.value_ratio),
-					backgroundColor: "#a78bfa",
-				},
-			],
-		},
-		options: {
-			indexAxis: "y",
-			plugins: {
-				legend: { display: false },
-				tooltip: { callbacks: { label: (i) => fmtRatio(i.parsed.x) } },
-			},
-			scales: {
-				x: {
-					title: { display: true, text: "× cheaper than typical rarity price" },
-					beginAtZero: true,
-				},
-			},
-		},
-	});
-}
-
-async function loadBestValue() {
-	const rows = await api(
-		"/api/best-value" + orderQuery(valueSort.order, valueSort.dir),
-	);
-	$("#value-body").innerHTML =
-		rows
-			.map(
-				(r) => `<tr>
-        <td>${itemName(r)}</td>
-        <td>${esc(r.item_type)}</td>
-        <td class="num">${r.item_level}</td>
-        <td>${rarityTag(r)}</td>
-        <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
-        <td class="num">${fmtPrice(r.median_unit_price)}</td>
-        <td class="num">${fmtPrice(r.current_median_unit_price)}</td>
-        <td class="num">${fmtPrice(r.current_min_unit_price)}</td>
-        <td class="num">${r.cheaper_than_pct}%</td>
-        <td class="num">${fmtInt(r.active_count)}</td>
-      </tr>`,
-			)
-			.join("") ||
-		'<tr><td colspan="10" class="muted">no rarity-tagged items observed yet</td></tr>';
-}
-
-const valueSort = wireColumnSort("best-value", {
-	order: "value_ratio",
-	dir: "desc",
-	apply: loadBestValue,
 });
 
 /* --- not on sale --------------------------------------------------------- */
@@ -852,21 +819,9 @@ function route() {
 }
 
 async function boot() {
-	await loadSprites(); // icon positions are needed by every table that renders a name
-	// The dashboard tabs are part of the shell even on an item page, so their
-	// data is loaded either way — only the view route() opens differs.
-	const data = loadOverview().catch((e) => console.error(e));
-	const listings = loadListings().catch((e) => console.error(e));
-	await Promise.all([data, listings]);
-	showTab("overview");
-	await Promise.all([
-		loadBestSellers().catch((e) => console.error(e)),
-		loadBestSellersChart().catch((e) => console.error(e)),
-		loadBestValue().catch((e) => console.error(e)),
-		loadBestValueChart().catch((e) => console.error(e)),
-		loadNotOnSale().catch((e) => console.error(e)),
-		loadRemoved().catch((e) => console.error(e)),
-	]);
+	await loadSprites(); // icon positions are needed by the item icon and every table
+	// route() opens the one view the URL asks for, and showTab() fetches only
+	// that tab's data — so an item page never requests the dashboard's data.
 	route();
 }
 boot();
