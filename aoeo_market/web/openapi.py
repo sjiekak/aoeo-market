@@ -264,44 +264,6 @@ def _best_seller_row_schema() -> dict:
     )
 
 
-def _best_value_row_schema() -> dict:
-    """One row of ``GET /api/best-value``: an item ranked by value for its rarity."""
-    return _composed(
-        _ref("ItemSummary"),
-        _object(
-            {
-                "item_type": {"type": "string"},
-                "item_level": {"type": "integer"},
-                "tier_reference_price": {"type": "integer", "description": "Median historical price of the item's rarity tier."},
-                "median_unit_price": {"type": "integer"},
-                "min_unit_price": {"type": "number"},
-                "max_unit_price": {"type": "number"},
-                "current_median_unit_price": {"type": "integer", "nullable": True},
-                "current_min_unit_price": {"type": "number", "nullable": True},
-                "active_count": {"type": "integer"},
-                "times_listed": {"type": "integer"},
-                "value_ratio": {"type": "number", "nullable": True, "description": "tier_reference_price / effective unit price."},
-                "cheaper_than_pct": {"type": "number", "description": "0..100 percentile within the rarity tier."},
-            },
-            [
-                "item_type",
-                "item_level",
-                "tier_reference_price",
-                "median_unit_price",
-                "min_unit_price",
-                "max_unit_price",
-                "current_median_unit_price",
-                "current_min_unit_price",
-                "active_count",
-                "times_listed",
-                "value_ratio",
-                "cheaper_than_pct",
-            ],
-            strict=False,
-        ),
-    )
-
-
 def _removal_reason_schema() -> dict:
     """Why a listing vanished, generated from the observer's classification.
 
@@ -663,18 +625,6 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "responses": {"200": _json_response("best-seller rows", _array_of("BestSellerRow"))},
             }
         },
-        "/api/best-value": {
-            "get": {
-                "summary": "Items ranked by value for their rarity (cheapest relative to their tier first)",
-                "description": "Value ratio = rarity-tier reference price / effective per-unit price; cheaper_than_pct is the item's price percentile within its tier.",
-                "parameters": [
-                    _query_param("order", "Sort column.", enum=list(store._BEST_VALUE_SORTS), default="value_ratio"),
-                    _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="desc"),
-                    _query_param("include_unrated", "Include items without a rarity tag as their own tier.", enum=["0", "1"], default="0"),
-                ],
-                "responses": {"200": _json_response("best-value rows", _array_of("BestValueRow"))},
-            }
-        },
         "/api/recently-removed": {
             "get": {
                 "summary": "Listings that vanished between the two most recent data points, or within a chosen time window",
@@ -710,7 +660,6 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "components": {
             "schemas": {
                 "BestSellerRow": _best_seller_row_schema(),
-                "BestValueRow": _best_value_row_schema(),
                 "Error": _error_schema(),
                 "HistogramBin": _histogram_bin_schema(),
                 "ItemDetail": _item_detail_schema(),
