@@ -196,7 +196,10 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   materials are recorded — all 35 types × 4 rarities × 3 materials.  Tiers
   within one chain (copper/bronze/iron/gold, pine/oak/ebony/guayacan, …) are
   near-identical in the art, so the reader disambiguates those by hue; every
-  slot is filled.
+  slot is filled.  The Dismantler refuses *store-bought, Event and Questline
+  completion reward* gear, so an excluded item reports no dismantle output at
+  all; only the event class is reliably detectable from the curated catalog
+  today (`catalog.is_dismantlable`), which is the rule applied for now.
 - **Item icons** — the item page shows the item's icon clipped in the browser
   from a sprite sheet via CSS `background-position`, exactly as celeste-search
   renders it (all sprite work is client-side).  The position index

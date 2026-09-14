@@ -545,3 +545,24 @@ def test_item_recipe_cost_and_dismantle(tmp_path):
     # a material has no gear type, so the guide gives no dismantle output
     assert "dismantle" not in store.price_history(conn, "4arcticfoxfur")
     conn.close()
+
+
+def test_event_items_are_not_dismantlable(tmp_path):
+    """Event gear is rejected by the Gear Dismantler, so no output is reported."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            # same type and rarity as the plain item below, but event-tagged
+            mk(1, item_id="ArmorBldg_Winter2021", item_type="Trait", price=1000),
+            mk(2, item_id="ArmorBldg_HDW", item_type="Trait", price=1000),
+        ],
+        captured_at=1000.0,
+    )
+
+    assert "dismantle" not in store.price_history(conn, "ArmorBldg_Winter2021")
+
+    plain = store.price_history(conn, "ArmorBldg_HDW")
+    assert plain["dismantle"]["type"] == "Reinforced Construction"
+    assert plain["dismantle"]["rarity"] == "Legendary"
+    conn.close()

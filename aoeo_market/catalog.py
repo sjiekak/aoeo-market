@@ -114,16 +114,30 @@ def _load_dismantle() -> dict:
     return _dismantle
 
 
+def is_dismantlable(entry: dict | None) -> bool:
+    """Whether the Gear Dismantler accepts the item behind a catalog *entry*.
+
+    In-game, *store-bought, Event and Questline completion reward equipment
+    cannot be dismantled*.  Only the event class is reliably detectable from
+    the curated catalog today (the ``event`` field, itself celeste-search's
+    ``isEventReward``), so that is the rule applied for now; the Dismantler
+    guide describes what a dismantlable item yields, not which items qualify.
+    """
+    return bool(entry and not entry.get("event"))
+
+
 def dismantle_of(item_id: str) -> dict | None:
-    """What the Gear Dismantler produces for this item, when the guide knows it.
+    """What the Gear Dismantler produces for this item, when it can and we know.
 
     The guide is keyed by gear type and item rarity, so an item needs both a
     known ``type`` and a rarity to resolve.  ``materials`` holds the raw
     material ids in guide order; an entry is ``None`` where the guide cell
-    could not be read.  Returns ``None`` for items the guide does not cover.
+    could not be read.  Returns ``None`` for items the guide does not cover and
+    for items the Dismantler will not accept at all (see
+    :func:`is_dismantlable`).
     """
     entry = lookup(item_id)
-    if not entry or not entry.get("type"):
+    if not entry or not entry.get("type") or not is_dismantlable(entry):
         return None
     tier = _load_dismantle().get("types", {}).get(entry["type"])
     if not tier:
