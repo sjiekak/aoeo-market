@@ -327,6 +327,46 @@ tbody tr:hover {
 	image-rendering: pixelated;
 }
 
+/* Crafting / dismantle material lists on the item page (icon links +
+   quantity + optional per-unit price). */
+.materials {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+}
+.materials .material {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--line);
+}
+.materials .material:last-child {
+	border-bottom: 0;
+}
+.materials .item-icon-inline {
+	width: 28px;
+	height: 28px;
+	margin-right: 0;
+}
+.materials .material-name {
+	flex: 1 1 auto;
+}
+.materials .material-qty,
+.materials .material-price {
+	flex: 0 0 auto;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.materials-total {
+	margin: 12px 0 0;
+}
+a.material-icon {
+	display: inline-flex;
+	line-height: 0;
+}
+
 footer {
 	text-align: center;
 	padding: 28px;

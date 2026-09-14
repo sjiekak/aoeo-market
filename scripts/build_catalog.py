@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -80,6 +81,17 @@ def _title_rarity(value: str | None) -> str | None:
     if not value:
         return None
     return RARITY_TITLE.get(value.strip().lower())
+
+
+def _clean_type(value: str | None) -> str | None:
+    """Strip the source db's event/legacy decorations from an item type.
+
+    ``"Cloth Armor \\nLegacy Item - Legacy Item"`` becomes ``"Cloth Armor"``,
+    so the gear type matches the label the Dismantler guide uses.
+    """
+    if not value:
+        return None
+    return re.split(r"\s*\n|\s+-\s+", value.strip())[0].strip() or None
 
 
 def _rarity_slot(entity: dict, query_rarity: str | None) -> str | None:
@@ -169,6 +181,19 @@ def build(src_dir: Path) -> dict:
                     entry["age"] = entity["age"]
                 if entity.get("event"):
                     entry["event"] = entity["event"]
+                # Gear items carry their type (the Dismantler guide's row) and,
+                # when a design produces them, the crafting recipe.
+                if kind == "item":
+                    item_type = _clean_type(entity.get("type"))
+                    if item_type:
+                        entry["type"] = item_type
+                    recipe = entity.get("recipe")
+                    if recipe and recipe.get("materials"):
+                        entry["recipe"] = {
+                            "school": _clean_type(recipe.get("school")),
+                            "level": recipe.get("level"),
+                            "materials": [{"id": (m.get("id") or "").lower(), "quantity": m.get("quantity")} for m in recipe["materials"]],
+                        }
                 _set_entry(catalog, qid, entry)
 
     # shared.json is a single object whose `materials` dict mirrors

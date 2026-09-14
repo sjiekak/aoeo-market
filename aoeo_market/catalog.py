@@ -38,8 +38,12 @@ RARITY_RANK = {
 }
 
 _CATALOG_PATH = Path(__file__).with_name("data") / "catalog.json"
+# Gear Dismantler output, keyed by gear type and item rarity (see
+# scripts/build_catalog.py's sibling, tmp/gamefiles/build_dismantle_map.py).
+_DISMANTLE_PATH = Path(__file__).with_name("data") / "dismantle_map.json"
 
 _catalog: dict[str, dict] | None = None
+_dismantle: dict | None = None
 
 
 def _load() -> dict[str, dict]:
@@ -86,6 +90,50 @@ def is_craftable(item_id: str) -> bool:
     """
     entry = lookup(item_id)
     return bool(entry and entry.get("craftable"))
+
+
+def type_of(item_id: str) -> str | None:
+    """The gear type — the Dismantler guide's row, e.g. ``"Fire Pot"``."""
+    entry = lookup(item_id)
+    return entry.get("type") if entry else None
+
+
+def recipe_of(item_id: str) -> dict | None:
+    """Crafting recipe ``{school, level, materials:[{id, quantity}]}``, if any.
+
+    Present only for items a crafting design produces (``craftable``).
+    """
+    entry = lookup(item_id)
+    return entry.get("recipe") if entry else None
+
+
+def _load_dismantle() -> dict:
+    global _dismantle
+    if _dismantle is None:
+        _dismantle = json.loads(_DISMANTLE_PATH.read_text(encoding="utf-8"))
+    return _dismantle
+
+
+def dismantle_of(item_id: str) -> dict | None:
+    """What the Gear Dismantler produces for this item, when the guide knows it.
+
+    The guide is keyed by gear type and item rarity, so an item needs both a
+    known ``type`` and a rarity to resolve.  ``materials`` holds the raw
+    material ids in guide order; an entry is ``None`` where the guide cell
+    could not be read.  Returns ``None`` for items the guide does not cover.
+    """
+    entry = lookup(item_id)
+    if not entry or not entry.get("type"):
+        return None
+    tier = _load_dismantle().get("types", {}).get(entry["type"])
+    if not tier:
+        return None
+    rar = rarity_of(item_id)
+    rarity = rar[1] if rar else None
+    mats = tier.get("dismantle", {}).get(rarity) if rarity else None
+    if not mats:
+        return None
+    return {"type": entry["type"], "school": tier.get("school"), "rarity": rarity, "materials": mats}
 
 
 def icon_fields(item_id: str) -> dict:

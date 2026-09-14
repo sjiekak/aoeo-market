@@ -43,8 +43,8 @@ from pathlib import Path
 
 import duckdb
 
+from .catalog import dismantle_of, icon_fields, name_of, rarity_of, recipe_of
 from .catalog import fields as catalog_fields
-from .catalog import icon_fields, name_of, rarity_of
 from .market import Listing
 
 _SCHEMA_STATEMENTS = (
@@ -520,6 +520,82 @@ def _median_prices_by_item(conn: duckdb.DuckDBPyConnection, snapshot_id: int) ->
 # --- per-item history ------------------------------------------------------
 
 
+def _material_prices(conn: duckdb.DuckDBPyConnection, item_ids: Sequence[str]) -> dict[str, float]:
+    """Per-unit price per item id: current median when listed now, else historical.
+
+    Same per-unit normalisation as every other view, so a stack's total price
+    never leaks into an estimate.
+    """
+    ids = sorted({i.lower() for i in item_ids if i})
+    if not ids:
+        return {}
+    latest = latest_snapshot(conn)
+    latest_id = latest["id"] if latest else None
+    placeholders = ",".join("?" for _ in ids)
+    every: dict[str, list[float]] = {}
+    active: dict[str, list[float]] = {}
+    for r in _rows(
+        conn,
+        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE lower(item_id) IN ({placeholders})",
+        ids,
+    ):
+        unit = r["item_price"] / max(r["item_count"], 1)
+        key = r["item_id"].lower()
+        every.setdefault(key, []).append(unit)
+        if r["snapshot_id"] == latest_id:
+            active.setdefault(key, []).append(unit)
+    return {k: median(active.get(k) or ps) for k, ps in every.items()}
+
+
+def _recipe_payload(conn: duckdb.DuckDBPyConnection, item_id: str) -> dict | None:
+    """The crafting recipe with per-material prices and a total cost estimate."""
+    recipe = recipe_of(item_id)
+    if not recipe:
+        return None
+    prices = _material_prices(conn, [(m.get("id") or "") for m in recipe.get("materials", [])])
+    materials: list[dict] = []
+    total = 0.0
+    priced = 0
+    for m in recipe.get("materials", []):
+        mid = m.get("id") or ""
+        qty = m.get("quantity")
+        price = prices.get(mid.lower())
+        row = {"item_id": mid, "quantity": qty, "unit_price": round(price, 2) if price is not None else None}
+        row.update(catalog_fields(mid))
+        if price is not None and qty:
+            total += price * qty
+            priced += 1
+        materials.append(row)
+    return {
+        "school": recipe.get("school"),
+        "level": recipe.get("level"),
+        "materials": materials,
+        # A partial estimate is still useful, but callers can tell it is partial.
+        "cost": round(total, 2) if priced else None,
+        "materials_priced": priced,
+    }
+
+
+def _dismantle_payload(item_id: str) -> dict | None:
+    """What the Gear Dismantler yields, enriched with catalog names/icons."""
+    info = dismantle_of(item_id)
+    if not info:
+        return None
+    materials = []
+    for mid in info.get("materials", []):
+        if not mid:
+            continue
+        row = {"item_id": mid}
+        row.update(catalog_fields(mid))
+        materials.append(row)
+    return {
+        "type": info.get("type"),
+        "school": info.get("school"),
+        "rarity": info.get("rarity"),
+        "materials": materials,
+    }
+
+
 def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int = 2000) -> dict | None:
     """Current and previous listings plus the price series of one item.
 
@@ -639,7 +715,9 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     rar = rarity_of(item_id)
     extra = catalog_fields(item_id)
     name = extra.pop("name", None)
-    return {
+    recipe = _recipe_payload(conn, item_id)
+    dismantle = _dismantle_payload(item_id)
+    out = {
         "item_id": item_id,
         "name": name,
         "item_type": meta["item_type"],
@@ -653,6 +731,13 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         "points": points,
         "histogram": histogram,
     }
+    # Omitted rather than null: the spec composes them from $refs, and OpenAPI
+    # 3.0's nullable cannot wrap an allOf/$ref the validator accepts.
+    if recipe:
+        out["recipe"] = recipe
+    if dismantle:
+        out["dismantle"] = dismantle
+    return out
 
 
 # --- not-on-sale / recently-removed ---------------------------------------

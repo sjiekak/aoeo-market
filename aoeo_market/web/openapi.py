@@ -346,6 +346,63 @@ def _scatter_point_schema() -> dict:
     )
 
 
+def _craft_material_schema() -> dict:
+    """A material named by a crafting recipe or a Dismantler output.
+
+    ``quantity``/``unit_price`` are recipe-only; a Dismantler material just
+    carries the curated identity so the dashboard can render its icon.
+    """
+    return _composed(
+        _ref("ItemSummary"),
+        _object(
+            {
+                "item_id": {"type": "string"},
+                "quantity": {"type": "integer", "nullable": True, "description": "Units needed by the recipe."},
+                "unit_price": {
+                    "type": "number",
+                    "nullable": True,
+                    "description": "Per-unit price: current median while listed now, else the historical median; null when never observed.",
+                },
+            },
+            ["item_id"],
+            strict=False,
+        ),
+    )
+
+
+def _recipe_schema() -> dict:
+    """The crafting recipe of a craftable item, plus a material-cost estimate."""
+    return _object(
+        {
+            "school": {"type": "string", "nullable": True},
+            "level": {"type": "integer", "nullable": True},
+            "materials": {"type": "array", "items": _ref("CraftMaterial")},
+            "cost": {
+                "type": "number",
+                "nullable": True,
+                "description": "Estimated crafting cost: sum of unit_price * quantity over the ingredients that have a price; null when none could be priced.",
+            },
+            "materials_priced": {"type": "integer", "description": "How many ingredients contributed to cost."},
+        },
+        ["materials", "cost", "materials_priced"],
+        strict=False,
+    )
+
+
+def _dismantle_schema() -> dict:
+    """What the Gear Dismantler yields for the item's gear type and rarity."""
+    return _object(
+        {
+            "type": {"type": "string", "description": "Gear type — the Dismantler guide's row."},
+            "school": {"type": "string", "nullable": True, "description": "Crafting school that produces the type."},
+            "rarity": {"type": "string", "description": "Item rarity selecting the guide column."},
+            "materials": {"type": "array", "items": _ref("CraftMaterial"), "description": "Materials produced, in guide order."},
+        },
+        ["type", "rarity", "materials"],
+        strict=False,
+    )
+
+
 def _item_detail_schema() -> dict:
     """The payload of ``GET /api/item/{item_id}``: identity + full history."""
     return _composed(
@@ -367,6 +424,8 @@ def _item_detail_schema() -> dict:
                     "items": _ref("PriceBin"),
                     "description": "Per-unit price distribution over the item's distinct listings, with log-spaced numeric bounds derived from the observed price range.",
                 },
+                "recipe": _ref("Recipe"),
+                "dismantle": _ref("Dismantle"),
             },
             ["item_type", "item_level", "current", "previous", "series", "points", "histogram"],
             strict=False,
@@ -660,6 +719,8 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "components": {
             "schemas": {
                 "BestSellerRow": _best_seller_row_schema(),
+                "CraftMaterial": _craft_material_schema(),
+                "Dismantle": _dismantle_schema(),
                 "Error": _error_schema(),
                 "HistogramBin": _histogram_bin_schema(),
                 "ItemDetail": _item_detail_schema(),
@@ -672,6 +733,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "PreviousListing": _previous_listing_schema(),
                 "PriceBin": _price_bin_schema(),
                 "PriceMover": _price_mover_schema(),
+                "Recipe": _recipe_schema(),
                 "RemovedListing": _removed_listing_schema(),
                 "RemovalReason": _removal_reason_schema(),
                 "ScatterPoint": _scatter_point_schema(),

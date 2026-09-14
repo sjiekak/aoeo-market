@@ -510,3 +510,38 @@ def test_backfill_is_idempotent(tmp_path):
     conn = store.open_store(tmp_path / "m.db")  # reopening does not backfill
     assert store.active_listings(conn)[0]["expires_at"] == before
     conn.close()
+
+
+def test_item_recipe_cost_and_dismantle(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            # a craftable Epic Fire Pot plus its three ingredients
+            mk(1, item_id="FireThrower2H_E006", item_type="Trait", price=5000),
+            mk(2, item_id="4arcticfoxfur", item_type="Material", price=100),
+            mk(3, item_id="4illuminatedcodex", item_type="Material", price=50),
+            mk(4, item_id="4philosopherstone", item_type="Material", price=25),
+        ],
+        captured_at=1000.0,
+    )
+
+    d = store.price_history(conn, "FireThrower2H_E006")
+    recipe = d["recipe"]
+    assert recipe["school"] == "Construction"
+    assert recipe["level"] == 40
+    assert [m["item_id"] for m in recipe["materials"]] == ["4arcticfoxfur", "4illuminatedcodex", "4philosopherstone"]
+    assert [m["quantity"] for m in recipe["materials"]] == [18, 8, 4]
+    assert recipe["materials"][0]["unit_price"] == 100
+    assert recipe["materials"][0]["name"] == "Arctic Fox Furs"
+    assert recipe["cost"] == 18 * 100 + 8 * 50 + 4 * 25
+    assert recipe["materials_priced"] == 3
+
+    # the Dismantler guide's Epic column for the Fire Pot type
+    assert d["dismantle"]["type"] == "Fire Pot"
+    assert d["dismantle"]["rarity"] == "Epic"
+    assert [m["item_id"] for m in d["dismantle"]["materials"]] == ["4illuminatedcodex", "3ironingot", "4whitehoney"]
+
+    # a material has no gear type, so the guide gives no dismantle output
+    assert "dismantle" not in store.price_history(conn, "4arcticfoxfur")
+    conn.close()

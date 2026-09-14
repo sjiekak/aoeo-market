@@ -1,0 +1,1406 @@
+{
+ "_note": "Gear Dismantler output by trait type and item rarity, read from the in-game 'Dismantler Output Guide'. A null slot could not be read with confidence; see _review for the top candidates. Quantities are server-side and are not included. The key is the trait/gear TYPE (not the crafting school): two types of the same school can differ, so school is informational only.",
+ "_review": [],
+ "materials": {
+  "151028": {
+   "legend_cell": [
+    1,
+    1
+   ],
+   "legend_rarity": "Common",
+   "material_id": "animalhide",
+   "name": "Animal Hides"
+  },
+  "151029": {
+   "legend_cell": [
+    1,
+    2
+   ],
+   "legend_rarity": "Common",
+   "material_id": "grain",
+   "name": "Grain"
+  },
+  "151030": {
+   "legend_cell": [
+    1,
+    3
+   ],
+   "legend_rarity": "Common",
+   "material_id": "copperingot",
+   "name": "Copper Ingots"
+  },
+  "151031": {
+   "legend_cell": [
+    1,
+    4
+   ],
+   "legend_rarity": "Common",
+   "material_id": "stoneblock",
+   "name": "Stone Blocks"
+  },
+  "151032": {
+   "legend_cell": [
+    1,
+    5
+   ],
+   "legend_rarity": "Common",
+   "material_id": "pineplank",
+   "name": "Pine Planks"
+  },
+  "151033": {
+   "legend_cell": [
+    2,
+    1
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2leather",
+   "name": "Leather"
+  },
+  "151034": {
+   "legend_cell": [
+    2,
+    2
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2oliveoil",
+   "name": "Olive Oil"
+  },
+  "151035": {
+   "legend_cell": [
+    2,
+    3
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2bronzeingot",
+   "name": "Bronze Ingots"
+  },
+  "151036": {
+   "legend_cell": [
+    2,
+    4
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2graniteblock",
+   "name": "Granite Blocks"
+  },
+  "151037": {
+   "legend_cell": [
+    2,
+    5
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2oakplank",
+   "name": "Oak Planks"
+  },
+  "151038": {
+   "legend_cell": [
+    2,
+    6
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2lorescroll",
+   "name": "Scrolls of Lore"
+  },
+  "151039": {
+   "legend_cell": [
+    2,
+    7
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2worktool",
+   "name": "Work Tools"
+  },
+  "151040": {
+   "legend_cell": [
+    2,
+    8
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2wool",
+   "name": "Wool Cloth"
+  },
+  "151041": {
+   "legend_cell": [
+    2,
+    9
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2resin",
+   "name": "Resin Vials"
+  },
+  "151042": {
+   "legend_cell": [
+    2,
+    10
+   ],
+   "legend_rarity": "Uncommon",
+   "material_id": "2garnet",
+   "name": "Garnets"
+  },
+  "151043": {
+   "legend_cell": [
+    3,
+    1
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3fineleather",
+   "name": "Fine Leather"
+  },
+  "151044": {
+   "legend_cell": [
+    3,
+    2
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3spice",
+   "name": "Spices"
+  },
+  "151045": {
+   "legend_cell": [
+    3,
+    3
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3ironingot",
+   "name": "Iron Ingots"
+  },
+  "151046": {
+   "legend_cell": [
+    3,
+    4
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3concreteblock",
+   "name": "Concrete Blocks"
+  },
+  "151047": {
+   "legend_cell": [
+    3,
+    5
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3ebonyplank",
+   "name": "Ebony Planks"
+  },
+  "151048": {
+   "legend_cell": [
+    3,
+    6
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3vellumscript",
+   "name": "Vellum Scripts"
+  },
+  "151049": {
+   "legend_cell": [
+    3,
+    7
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3precisiontool",
+   "name": "Precision Tools"
+  },
+  "151050": {
+   "legend_cell": [
+    3,
+    8
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3cottoncloth",
+   "name": "Cotton Cloth"
+  },
+  "151051": {
+   "legend_cell": [
+    3,
+    9
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3bitumenglue",
+   "name": "Bitumen Glue"
+  },
+  "151052": {
+   "legend_cell": [
+    3,
+    10
+   ],
+   "legend_rarity": "Rare",
+   "material_id": "3gemstone",
+   "name": "Gemstones"
+  },
+  "151053": {
+   "legend_cell": [
+    4,
+    1
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4arcticfoxfur",
+   "name": "Arctic Fox Furs"
+  },
+  "151054": {
+   "legend_cell": [
+    4,
+    2
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4whitehoney",
+   "name": "White Honey"
+  },
+  "151055": {
+   "legend_cell": [
+    4,
+    3
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4puregoldingot",
+   "name": "Pure Gold Ingots"
+  },
+  "151056": {
+   "legend_cell": [
+    4,
+    4
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4obsidianblock",
+   "name": "Obsidian Blocks"
+  },
+  "151057": {
+   "legend_cell": [
+    4,
+    5
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4guayacanplank",
+   "name": "Guayacan Planks"
+  },
+  "151058": {
+   "legend_cell": [
+    4,
+    6
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4illuminatedcodex",
+   "name": "Illuminated Codexes"
+  },
+  "151059": {
+   "legend_cell": [
+    4,
+    7
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4archimedestool",
+   "name": "Archimedes' Tools"
+  },
+  "151060": {
+   "legend_cell": [
+    4,
+    8
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4silkcloth",
+   "name": "Silk Cloth"
+  },
+  "151061": {
+   "legend_cell": [
+    4,
+    9
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4philosopherstone",
+   "name": "Philosopher's Stones"
+  },
+  "151062": {
+   "legend_cell": [
+    4,
+    10
+   ],
+   "legend_rarity": "Epic",
+   "material_id": "4flawlessdiamond",
+   "name": "Flawless Diamonds"
+  },
+  "151063": {
+   "legend_cell": [
+    5,
+    10
+   ],
+   "legend_rarity": "Legendary",
+   "material_id": "5emaculatepearl",
+   "name": "Immaculate Pearls"
+  },
+  "151064": {
+   "legend_cell": [
+    5,
+    7
+   ],
+   "legend_rarity": "Legendary",
+   "material_id": "5vitruviustool",
+   "name": "Vitruvius' Tools"
+  },
+  "151065": {
+   "legend_cell": [
+    5,
+    9
+   ],
+   "legend_rarity": "Legendary",
+   "material_id": "5ostanesstone",
+   "name": "Ostanes' Stones"
+  },
+  "151066": {
+   "legend_cell": [
+    5,
+    8
+   ],
+   "legend_rarity": "Legendary",
+   "material_id": "5muslincloth",
+   "name": "Muslin Cloth"
+  },
+  "151067": {
+   "legend_cell": [
+    5,
+    6
+   ],
+   "legend_rarity": "Legendary",
+   "material_id": "5engravedplate",
+   "name": "Engraved Plates"
+  }
+ },
+ "rarities": [
+  "Uncommon",
+  "Rare",
+  "Epic",
+  "Legendary"
+ ],
+ "source": {
+  "archive": "art/Art.bar",
+  "confidence_ratio": 2.0,
+  "guide_textures": [
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page1_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page2_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page3_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page4_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page5_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page6_ua.ddt",
+   "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_Page7_ua.ddt"
+  ],
+  "hue_resolved_slots": 44,
+  "legend_texture": "Celeste\\UserInterface\\GearDismantle\\GearDismantleGuide_MatsGuide_ua.ddt",
+  "method": "connected-component tile detection + 32x32 box-normalised RGB match, with a hue (R/G, G/B) fallback scoped to one material chain",
+  "server_side_note": "ReforgeItemBlacklist.xml carries 'DONT FORGET TO UPDATE THE DISMANTLER FILE SERVERSIDE' -- the client has the guide, the server computes the amounts."
+ },
+ "types": {
+  "Armor Plating": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "3ebonyplank",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5engravedplate",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2graniteblock",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "pineplank",
+     "2graniteblock",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "Armor",
+   "page": 1,
+   "row": 1,
+   "school": "Engineering School",
+   "type": "Armor Plating"
+  },
+  "Arrows": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3ebonyplank",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5vitruviustool",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2graniteblock",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "pineplank",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Arrows",
+   "page": 1,
+   "row": 2,
+   "school": "Archery School",
+   "type": "Arrows"
+  },
+  "Banner": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "2leather",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5muslincloth",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2bronzeingot",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "animalhide",
+     "2wool"
+    ]
+   },
+   "guide_label": "Banner",
+   "page": 1,
+   "row": 3,
+   "school": "Infantry School",
+   "type": "Banner"
+  },
+  "Belly Bow": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3ebonyplank",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5emaculatepearl",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2oliveoil",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "pineplank",
+     "2worktool"
+    ]
+   },
+   "guide_label": "BellyBow",
+   "page": 1,
+   "row": 4,
+   "school": "Archery School",
+   "type": "Belly Bow"
+  },
+  "Bow": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "3spice",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5vitruviustool",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2oakplank",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2oakplank",
+     "grain",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Bow",
+   "page": 1,
+   "row": 5,
+   "school": "Archery School",
+   "type": "Bow"
+  },
+  "Cloth Armor": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "2leather",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5muslincloth",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2oliveoil",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "animalhide",
+     "2wool"
+    ]
+   },
+   "guide_label": "ClothArmor",
+   "page": 2,
+   "row": 1,
+   "school": "Religion School",
+   "type": "Cloth Armor"
+  },
+  "Construction Addition": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "3ebonyplank",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5ostanesstone",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2bronzeingot",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "pineplank",
+     "2resin"
+    ]
+   },
+   "guide_label": "Construction",
+   "page": 2,
+   "row": 2,
+   "school": "Construction School",
+   "type": "Construction Addition"
+  },
+  "Engineering Accessory": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "3ebonyplank",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5vitruviustool",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2oliveoil",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "pineplank",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Engineering",
+   "page": 2,
+   "row": 3,
+   "school": "Engineering School",
+   "type": "Engineering Accessory"
+  },
+  "Fire Pot": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "3ironingot",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5ostanesstone",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2oliveoil",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "copperingot",
+     "2resin"
+    ]
+   },
+   "guide_label": "Pot",
+   "page": 2,
+   "row": 4,
+   "school": "Construction School",
+   "type": "Fire Pot"
+  },
+  "Fishing Nets": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "3concreteblock",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5ostanesstone",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2leather",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2leather",
+     "stoneblock",
+     "2resin"
+    ]
+   },
+   "guide_label": "Nets",
+   "page": 2,
+   "row": 5,
+   "school": "Craftsmen School",
+   "type": "Fishing Nets"
+  },
+  "Great Axe": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3concreteblock",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5ostanesstone",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2bronzeingot",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "stoneblock",
+     "2resin"
+    ]
+   },
+   "guide_label": "Axe",
+   "page": 3,
+   "row": 1,
+   "school": "Infantry School",
+   "type": "Great Axe"
+  },
+  "Heavy Club": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3concreteblock",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5engravedplate",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2oakplank",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2oakplank",
+     "stoneblock",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "Club",
+   "page": 3,
+   "row": 2,
+   "school": "Infantry School",
+   "type": "Heavy Club"
+  },
+  "Heavy Spear": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3concreteblock",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5ostanesstone",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2oakplank",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2leather",
+     "stoneblock",
+     "2resin"
+    ]
+   },
+   "guide_label": "Spear2H",
+   "page": 3,
+   "row": 3,
+   "school": "Cavalry School",
+   "type": "Heavy Spear"
+  },
+  "Holy Staff": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3ironingot",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5emaculatepearl",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2leather",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2leather",
+     "copperingot",
+     "2garnet"
+    ]
+   },
+   "guide_label": "Staff",
+   "page": 3,
+   "row": 4,
+   "school": "Religion School",
+   "type": "Holy Staff"
+  },
+  "Javelin": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3spice",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5emaculatepearl",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2oakplank",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2oakplank",
+     "grain",
+     "2garnet"
+    ]
+   },
+   "guide_label": "Javelin",
+   "page": 3,
+   "row": 5,
+   "school": "Cavalry School",
+   "type": "Javelin"
+  },
+  "Laborer Gear": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "2leather",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5muslincloth",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2graniteblock",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "animalhide",
+     "2wool"
+    ]
+   },
+   "guide_label": "Laborer",
+   "page": 4,
+   "row": 1,
+   "school": "Craftsmen School",
+   "type": "Laborer Gear"
+  },
+  "Light Armor": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3concreteblock",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5muslincloth",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2leather",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2leather",
+     "stoneblock",
+     "2wool"
+    ]
+   },
+   "guide_label": "LightArmor",
+   "page": 4,
+   "row": 2,
+   "school": "Cavalry School",
+   "type": "Light Armor"
+  },
+  "Light Spear": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3spice",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5ostanesstone",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2leather",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2leather",
+     "grain",
+     "2resin"
+    ]
+   },
+   "guide_label": "Spear1H",
+   "page": 4,
+   "row": 3,
+   "school": "Infantry School",
+   "type": "Light Spear"
+  },
+  "Medium Armor": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3ironingot",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5ostanesstone",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2graniteblock",
+     "3bitumenglue"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "copperingot",
+     "2resin"
+    ]
+   },
+   "guide_label": "MediumArmor",
+   "page": 4,
+   "row": 4,
+   "school": "Infantry School",
+   "type": "Medium Armor"
+  },
+  "Merchant Gear": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "2leather",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5emaculatepearl",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2graniteblock",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "animalhide",
+     "2garnet"
+    ]
+   },
+   "guide_label": "Merchant",
+   "page": 4,
+   "row": 5,
+   "school": "Craftsmen School",
+   "type": "Merchant Gear"
+  },
+  "Ram Head": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3spice",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5vitruviustool",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2oakplank",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2oakplank",
+     "grain",
+     "2worktool"
+    ]
+   },
+   "guide_label": "RamHead",
+   "page": 5,
+   "row": 1,
+   "school": "Engineering School",
+   "type": "Ram Head"
+  },
+  "Reinforced Construction": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3ebonyplank",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5vitruviustool",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2graniteblock",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "pineplank",
+     "2worktool"
+    ]
+   },
+   "guide_label": "ReinforcedConstruction",
+   "page": 5,
+   "row": 2,
+   "school": "Construction School",
+   "type": "Reinforced Construction"
+  },
+  "Religious Item": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3ironingot",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5engravedplate",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2oliveoil",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "copperingot",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "ReligiousItem",
+   "page": 5,
+   "row": 3,
+   "school": "Religion School",
+   "type": "Religious Item"
+  },
+  "Scepter": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3ironingot",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5engravedplate",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2leather",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2leather",
+     "copperingot",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "Scepter",
+   "page": 5,
+   "row": 4,
+   "school": "Religion School",
+   "type": "Scepter"
+  },
+  "Scout Special": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "2leather",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5vitruviustool",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2bronzeingot",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "animalhide",
+     "2worktool"
+    ]
+   },
+   "guide_label": "ScoutSpecial",
+   "page": 5,
+   "row": 5,
+   "school": null,
+   "type": "Scout Special"
+  },
+  "Shield": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3concreteblock",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5engravedplate",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2leather",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2leather",
+     "stoneblock",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "Shield",
+   "page": 6,
+   "row": 1,
+   "school": "Cavalry School",
+   "type": "Shield"
+  },
+  "Ship Accessory": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3ebonyplank",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5emaculatepearl",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2bronzeingot",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "pineplank",
+     "2garnet"
+    ]
+   },
+   "guide_label": "ShipAcc",
+   "page": 6,
+   "row": 2,
+   "school": "Construction School",
+   "type": "Ship Accessory"
+  },
+  "Sling": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3spice",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5muslincloth",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2bronzeingot",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "grain",
+     "2wool"
+    ]
+   },
+   "guide_label": "Sling",
+   "page": 6,
+   "row": 3,
+   "school": "Archery School",
+   "type": "Sling"
+  },
+  "Soldiers' Gear": {
+   "dismantle": {
+    "Epic": [
+     "4silkcloth",
+     "2leather",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4silkcloth",
+     "5engravedplate",
+     "4arcticfoxfur"
+    ],
+    "Rare": [
+     "2leather",
+     "2oliveoil",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "animalhide",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "SoldiersGear",
+   "page": 6,
+   "row": 4,
+   "school": "Infantry School",
+   "type": "Soldiers' Gear"
+  },
+  "Sword": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3ironingot",
+     "4obsidianblock"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5emaculatepearl",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2graniteblock",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2graniteblock",
+     "copperingot",
+     "2garnet"
+    ]
+   },
+   "guide_label": "Sword",
+   "page": 6,
+   "row": 5,
+   "school": "Infantry School",
+   "type": "Sword"
+  },
+  "Throwing Arm": {
+   "dismantle": {
+    "Epic": [
+     "4archimedestool",
+     "3ebonyplank",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4archimedestool",
+     "5emaculatepearl",
+     "4guayacanplank"
+    ],
+    "Rare": [
+     "3ebonyplank",
+     "2oliveoil",
+     "3gemstone"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "pineplank",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Arm",
+   "page": 7,
+   "row": 1,
+   "school": "Engineering School",
+   "type": "Throwing Arm"
+  },
+  "Torc": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "3concreteblock",
+     "4guayacanplank"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5engravedplate",
+     "4obsidianblock"
+    ],
+    "Rare": [
+     "3concreteblock",
+     "2oakplank",
+     "3vellumscript"
+    ],
+    "Uncommon": [
+     "2oakplank",
+     "stoneblock",
+     "2lorescroll"
+    ]
+   },
+   "guide_label": "Torc",
+   "page": 7,
+   "row": 2,
+   "school": "Metalworking School",
+   "type": "Torc"
+  },
+  "War Horn": {
+   "dismantle": {
+    "Epic": [
+     "4illuminatedcodex",
+     "3ironingot",
+     "4whitehoney"
+    ],
+    "Legendary": [
+     "4illuminatedcodex",
+     "5vitruviustool",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3ironingot",
+     "2oliveoil",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2oliveoil",
+     "copperingot",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Horn",
+   "page": 7,
+   "row": 3,
+   "school": "Metalworking School",
+   "type": "War Horn"
+  },
+  "Warpaint": {
+   "dismantle": {
+    "Epic": [
+     "4philosopherstone",
+     "3spice",
+     "4puregoldingot"
+    ],
+    "Legendary": [
+     "4philosopherstone",
+     "5muslincloth",
+     "4whitehoney"
+    ],
+    "Rare": [
+     "3spice",
+     "2bronzeingot",
+     "3cottoncloth"
+    ],
+    "Uncommon": [
+     "2bronzeingot",
+     "grain",
+     "2wool"
+    ]
+   },
+   "guide_label": "Warpaint",
+   "page": 7,
+   "row": 4,
+   "school": "Metalworking School",
+   "type": "Warpaint"
+  },
+  "Work Tools": {
+   "dismantle": {
+    "Epic": [
+     "4flawlessdiamond",
+     "3spice",
+     "4arcticfoxfur"
+    ],
+    "Legendary": [
+     "4flawlessdiamond",
+     "5vitruviustool",
+     "4puregoldingot"
+    ],
+    "Rare": [
+     "3spice",
+     "2leather",
+     "3precisiontool"
+    ],
+    "Uncommon": [
+     "2leather",
+     "grain",
+     "2worktool"
+    ]
+   },
+   "guide_label": "Tools",
+   "page": 7,
+   "row": 5,
+   "school": "Craftsmen School",
+   "type": "Work Tools"
+  }
+ }
+}
