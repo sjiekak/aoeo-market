@@ -114,7 +114,6 @@ The intended deployment puts both components in one namespace:
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
-| **Best value** | Items ranked by **value for their rarity**: how cheap an item trades relative to the typical price of its rarity tier (a 2× ratio means half the typical price). Orderable by ratio, price, "cheaper than %" percentile and more; a bar chart shows the ten best. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
 | **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. |
@@ -122,6 +121,11 @@ The intended deployment puts both components in one namespace:
 Every sortable table shares one interaction: click a column header to sort
 min-first (↑), click it again for max-first (↓), and a third time to return
 to the unsorted order. Clicking a different column starts it min-first.
+
+Each tab fetches its data the first time it is opened, so a page load only
+requests what it shows: the dashboard opens on the overview and loads the
+other tabs on demand, and an item page (`/item/<item_id>`) requests only that
+item.
 
 Each item also has its own HTML page at `GET /item/<item_id>`: the server
 answers that path with the dashboard shell and the front-end opens the item
@@ -141,7 +145,6 @@ returns the shell; the page then reports that the item was never observed.
 | `GET /api/item/<item_id>` | the item's curated identity (name, kind, icon, rarity), its current listings and its previous (vanished) listings as full listing rows with the EXPIRED vs REMOVED classification, and the price history (`series`, `points`) |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
-| `GET /api/best-value?order=&dir=&include_unrated=` | items ranked by value for their rarity (cheapest relative to their tier first) |
 | `GET /api/recently-removed?window=` | listings that vanished between the last two snapshots (default), or within the last `window` seconds |
 | `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}`; the server computes and stores each absolute `expires_at` from the posted countdown |
 
@@ -206,17 +209,9 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   count toward `sales` but not toward the time stats — the view needs a few
   hourly snapshots before it fills in, and times are accurate to within one
   poll interval.
-- **Value for rarity** (best value) compares each item against its own rarity
-  tier: the tier's reference price is the median of its items' historical
-  median prices (each item counts once), and the value ratio is
-  reference ÷ price (current median while the item is on sale, historical
-  median otherwise), so 2× means half the typical price of that rarity. The
-  "cheaper than" column is the item's price percentile within its tier.
-  Untagged items (materials and most consumables) are excluded by default —
-  the `include_unrated` API flag adds them as their own tier.
 - **Price per unit**: the listing's `ItemPrice` is the *total for the whole
   stack* (`ItemCount`), and bulk discounts exist, so every analytics view
-  (price distributions, item history, best value, not-on-sale stats, movers)
+  (price distributions, item history, not-on-sale stats, movers)
   normalizes to `ItemPrice / ItemCount`. The listings and item tables show
   both the unit price and, where relevant, the stack total.
 - The database only grows: `fetch --store` never deletes. To start over,

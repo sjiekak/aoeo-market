@@ -126,7 +126,6 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
         "/api/item/{item_id}",
         "/api/not-on-sale",
         "/api/best-sellers",
-        "/api/best-value",
         "/api/recently-removed",
     ):
         assert path in spec["paths"], path
@@ -273,8 +272,6 @@ def test_endpoint_payloads_validate_against_the_spec(tmp_path):
     check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
     check("/api/not-on-sale", "/api/not-on-sale")
     check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
-    check("/api/best-value", "/api/best-value")
-    check("/api/best-value", "/api/best-value", {"include_unrated": ["1"]})
     check("/api/recently-removed", "/api/recently-removed")
     check("/api/item/nope", "/api/item/{item_id}", status=404)  # the Error schema
 
@@ -381,32 +378,6 @@ def test_best_sellers_endpoint(tmp_path):
     assert '"median_time": null' in body.decode()
     status, _, _ = app.handle("/api/best-sellers", {"min_sales": ["abc"]})
     assert status == 400
-
-
-def test_best_value_endpoint(tmp_path):
-    app = app_for(tmp_path)
-    # the seed's items are both rarity-tagged: Axe_R_I (gone) and Sword_U_III
-    _, _, body = app.handle("/api/best-value")
-    assert "Sword_U_III" in body.decode()
-    assert "Axe_R_I" in body.decode()
-    assert '"value_ratio"' in body.decode()
-    status, _, _ = app.handle("/api/best-value", {"include_unrated": ["1"]})
-    assert status == 200
-    status, _, _ = app.handle("/api/best-value", {"include_unrated": ["abc"]})
-    assert status == 400
-
-
-def test_best_value_include_unrated(tmp_path):
-    db = tmp_path / "u.db"
-    conn = store.open_store(db)
-    store.record_snapshot(conn, [mk(1, item_id="Sword_U_III", price=120), mk(2, item_id="PlainMat", price=10)], captured_at=1000.0)
-    conn.close()
-    app = WebApp(str(db))
-    _, _, body = app.handle("/api/best-value")
-    assert "PlainMat" not in body.decode()
-    _, _, body = app.handle("/api/best-value", {"include_unrated": ["1"]})
-    assert "PlainMat" in body.decode()
-    assert '"rarity": null' in body.decode()
 
 
 def test_post_snapshot_and_read_back(tmp_path):

@@ -18,7 +18,7 @@ served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.web.openapi`
 from the routing metadata, so it cannot drift from the implementation).
 In short: probes at ``/healthz`` and ``/readyz``; dashboard reads under
 ``/api/*`` (overview, listings, item history, not-on-sale, best-sellers,
-best-value, recently-removed); the single write endpoint
+recently-removed); the single write endpoint
 ``POST /api/snapshot`` (unauthenticated — keep the server on a private
 network or protect it with a reverse proxy when it is reachable beyond
 localhost).
@@ -139,15 +139,6 @@ class WebApp:
                         order=query.get("order", ["median_time"])[0],
                         direction=query.get("dir", ["asc"])[0],
                         min_sales=self._int_param(query, "min_sales", 1),
-                    )
-                )
-            if path == "/api/best-value":
-                return self._json(
-                    store.best_value(
-                        self._conn(),
-                        order=query.get("order", ["value_ratio"])[0],
-                        direction=query.get("dir", ["desc"])[0],
-                        include_unrated=self._int_param(query, "include_unrated", 0) == 1,
                     )
                 )
             if path == "/api/recently-removed":
