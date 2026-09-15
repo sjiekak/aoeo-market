@@ -29,3 +29,5 @@ We aim to enforce coding style using a linter (`ruff`).
 
 - commits used [conventional commits convention](https://www.conventionalcommits.org/en/v1.0.0/) with a body
 - commit body is a summary of changes and why they have been made
+- never commit directly to `main`
+- changes are added to main via -> feature branch -> Pull Request
