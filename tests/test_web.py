@@ -126,6 +126,7 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
         "/api/item/{item_id}",
         "/api/not-on-sale",
         "/api/best-sellers",
+        "/api/best-value",
         "/api/recently-removed",
     ):
         assert path in spec["paths"], path
@@ -272,6 +273,7 @@ def test_endpoint_payloads_validate_against_the_spec(tmp_path):
     check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
     check("/api/not-on-sale", "/api/not-on-sale")
     check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
+    check("/api/best-value", "/api/best-value")
     check("/api/recently-removed", "/api/recently-removed")
     check("/api/item/nope", "/api/item/{item_id}", status=404)  # the Error schema
 
@@ -378,6 +380,37 @@ def test_best_sellers_endpoint(tmp_path):
     assert '"median_time": null' in body.decode()
     status, _, _ = app.handle("/api/best-sellers", {"min_sales": ["abc"]})
     assert status == 400
+
+
+def test_best_value_endpoint(tmp_path):
+    import json
+
+    db = tmp_path / "v.db"
+    conn = store.open_store(db)
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="4ArcticFoxFur", item_type="Material", price=100),
+            mk(2, item_id="4IlluminatedCodex", item_type="Material", price=50),
+            mk(3, item_id="4PhilosopherStone", item_type="Material", price=25),
+            mk(4, item_id="FireThrower2H_E006", item_type="Trait", price=5000),
+        ],
+        captured_at=1000.0,
+    )
+    conn.close()
+    app = WebApp(str(db))
+
+    status, _, body = app.handle("/api/best-value")
+    assert status == 200
+    rows = json.loads(body)
+    assert [r["item_id"] for r in rows] == ["FireThrower2H_E006"]
+    assert rows[0]["craft_cost"] == 2300  # 18*100 + 8*50 + 4*25
+    assert rows[0]["value_ratio"] == round(5000 / 2300, 2)
+    assert rows[0]["listed_now"] is True
+
+    # ascending is the same metric read from the other end
+    _, _, body = app.handle("/api/best-value", {"dir": ["asc"]})
+    assert json.loads(body)[0]["item_id"] == "FireThrower2H_E006"
 
 
 def test_post_snapshot_and_read_back(tmp_path):

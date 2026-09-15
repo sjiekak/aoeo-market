@@ -107,6 +107,11 @@ def recipe_of(item_id: str) -> dict | None:
     return entry.get("recipe") if entry else None
 
 
+def craftable_ids() -> list[str]:
+    """Every catalog key (lowercased wire id) that carries a crafting recipe."""
+    return [key for key, entry in _load().items() if entry.get("recipe")]
+
+
 def _load_dismantle() -> dict:
     global _dismantle
     if _dismantle is None:
