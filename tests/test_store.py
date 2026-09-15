@@ -510,3 +510,82 @@ def test_backfill_is_idempotent(tmp_path):
     conn = store.open_store(tmp_path / "m.db")  # reopening does not backfill
     assert store.active_listings(conn)[0]["expires_at"] == before
     conn.close()
+
+
+def test_item_recipe_cost_and_dismantle(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            # a craftable Epic Fire Pot plus its three ingredients
+            mk(1, item_id="FireThrower2H_E006", item_type="Trait", price=5000),
+            mk(2, item_id="4arcticfoxfur", item_type="Material", price=100),
+            mk(3, item_id="4illuminatedcodex", item_type="Material", price=50),
+            mk(4, item_id="4philosopherstone", item_type="Material", price=25),
+        ],
+        captured_at=1000.0,
+    )
+
+    d = store.price_history(conn, "FireThrower2H_E006")
+    recipe = d["recipe"]
+    assert recipe["school"] == "Construction"
+    assert recipe["level"] == 40
+    assert [m["item_id"] for m in recipe["materials"]] == ["4arcticfoxfur", "4illuminatedcodex", "4philosopherstone"]
+    assert [m["quantity"] for m in recipe["materials"]] == [18, 8, 4]
+    assert recipe["materials"][0]["unit_price"] == 100
+    assert recipe["materials"][0]["name"] == "Arctic Fox Furs"
+    assert recipe["cost"] == 18 * 100 + 8 * 50 + 4 * 25
+    assert recipe["materials_priced"] == 3
+
+    # the Dismantler guide's Epic column for the Fire Pot type
+    assert d["dismantle"]["type"] == "Fire Pot"
+    assert d["dismantle"]["rarity"] == "Epic"
+    assert [m["item_id"] for m in d["dismantle"]["materials"]] == ["4illuminatedcodex", "3ironingot", "4whitehoney"]
+
+    # a material has no gear type, so the guide gives no dismantle output
+    assert "dismantle" not in store.price_history(conn, "4arcticfoxfur")
+    conn.close()
+
+
+def test_event_items_are_not_dismantlable(tmp_path):
+    """Event gear is rejected by the Gear Dismantler, so no output is reported."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            # same type and rarity as the plain item below, but event-tagged
+            mk(1, item_id="ArmorBldg_Winter2021", item_type="Trait", price=1000),
+            mk(2, item_id="ArmorBldg_HDW", item_type="Trait", price=1000),
+        ],
+        captured_at=1000.0,
+    )
+
+    assert "dismantle" not in store.price_history(conn, "ArmorBldg_Winter2021")
+
+    plain = store.price_history(conn, "ArmorBldg_HDW")
+    assert plain["dismantle"]["type"] == "Reinforced Construction"
+    assert plain["dismantle"]["rarity"] == "Legendary"
+    conn.close()
+
+
+def test_item_lookup_is_case_insensitive(tmp_path):
+    """Listings keep the server's spelling; the API accepts any case.
+
+    The catalog and the Dismantler map key ids lowercased while the wire keeps
+    mixed case, so a lowercased link (e.g. from a recipe's ingredients) must
+    still resolve — and report the canonical id back.
+    """
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [mk(1, item_id="4IlluminatedCodex", item_type="Material", price=50)],
+        captured_at=1000.0,
+    )
+
+    lower = store.price_history(conn, "4illuminatedcodex")
+    assert lower["item_id"] == "4IlluminatedCodex"
+    assert lower["points"][0]["price"] == 50.0
+    assert len(lower["current"]) == 1
+
+    assert store.price_history(conn, "4ILLUMINATEDCODEX")["item_id"] == "4IlluminatedCodex"
+    conn.close()

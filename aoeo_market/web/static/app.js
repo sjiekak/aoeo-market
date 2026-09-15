@@ -78,10 +78,16 @@ const esc = (s) =>
 			],
 	);
 
+// Wire item ids are case-insensitive (listings keep the server's spelling while
+// the catalog and the Dismantler map key everything lowercased), and the API
+// resolves either case — so every generated path is lowercase and the same item
+// always has one URL.
+const itemHref = (itemId) => `/item/${encodeURIComponent(String(itemId).toLowerCase())}`;
+
 function itemLink(itemId, name) {
 	const label = name || itemId;
 	const title = name ? ` title="${esc(itemId)}"` : "";
-	return `<a href="/item/${encodeURIComponent(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
+	return `<a href="${itemHref(itemId)}" class="item-link"${title}>${esc(label)}</a>`;
 }
 
 function rarityBadge(name) {
@@ -656,6 +662,55 @@ function itemName(row) {
 	return itemIconHtml(row.kind, row.icon) + itemLink(row.item_id, row.name);
 }
 
+// A material's sprite icon as a real link to its item page, with the name as
+// the tooltip; the name next to it links there too.
+function materialIconLink(row) {
+	const name = row.name || row.item_id;
+	const icon = itemIconHtml(row.kind, row.icon);
+	if (!icon) return "";
+	return `<a href="${itemHref(row.item_id)}" class="material-icon" title="${esc(name)}">${icon}</a>`;
+}
+
+function renderRecipe(recipe) {
+	const card = $("#item-recipe-card");
+	if (!recipe) {
+		card.hidden = true;
+		return;
+	}
+	card.hidden = false;
+	$("#item-recipe-meta").textContent = [recipe.school, recipe.level != null ? `level ${recipe.level}` : null]
+		.filter(Boolean)
+		.join(" · ");
+	$("#item-recipe-materials").innerHTML = recipe.materials
+		.map((m) => {
+			const line = m.unit_price != null && m.quantity != null ? m.unit_price * m.quantity : null;
+			const price = m.unit_price != null ? `${fmtPrice(m.unit_price)}/unit` : "no price";
+			return `<li class="material">
+        ${materialIconLink(m)}
+        <span class="material-name">${itemLink(m.item_id, m.name)}</span>
+        <span class="material-qty">×${fmtInt(m.quantity)}</span>
+        <span class="material-price">${price}${line != null ? ` · ${fmtPrice(line)}` : ""}</span>
+      </li>`;
+		})
+		.join("");
+	$("#item-recipe-cost").innerHTML =
+		`Estimated craft cost <b>${recipe.cost != null ? fmtPrice(recipe.cost) : "—"}</b> ` +
+		`<span class="muted">(${recipe.materials_priced}/${recipe.materials.length} priced)</span>`;
+}
+
+function renderDismantle(dismantle) {
+	const card = $("#item-dismantle-card");
+	if (!dismantle) {
+		card.hidden = true;
+		return;
+	}
+	card.hidden = false;
+	$("#item-dismantle-meta").textContent = [dismantle.type, dismantle.rarity, dismantle.school].filter(Boolean).join(" · ");
+	$("#item-dismantle-materials").innerHTML = dismantle.materials
+		.map((m) => `<li class="material">${materialIconLink(m)}<span class="material-name">${itemLink(m.item_id, m.name)}</span></li>`)
+		.join("");
+}
+
 function renderItemImage(it) {
 	const img = $("#item-image");
 	const s = spriteIconStyle(it.kind, it.icon);
@@ -774,6 +829,10 @@ async function loadItem(itemId) {
 			)
 			.join("") ||
 		'<tr><td colspan="7" class="muted">no previous listings recorded</td></tr>';
+
+	renderRecipe(it.recipe);
+	renderDismantle(it.dismantle);
+	$("#item-craft-row").hidden = !it.recipe && !it.dismantle;
 }
 
 $("#item-back").addEventListener("click", () => {
