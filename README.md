@@ -42,6 +42,9 @@ uv run python -m aoeo_market.web --db market.db                    # serve the d
   (validated against the real server on 2026-08-17).
 - [Market website](docs/market-website.md) — the DuckDB snapshot store, the
   hourly cron fetch, the dashboard views, and the JSON API.
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — the Microsoft Game Content
+  Usage Rules notice for the Age of Empires Online content, the ISC licence for
+  the Project Celeste catalog data, and the dependency licences.
 
 ## Layout
 
@@ -87,3 +90,11 @@ tests/capture/    capture-dependent tests + reference data — local-only,
 aoeo_market is a hobbyst project
 aoeo_market is not endorsed by or affiliated with Microsoft.
 aoeo_market is not endorsed by or affiliated with Project Celeste.
+
+Age of Empires Online © Microsoft Corporation. AoEO Market was created under
+Microsoft's ["Game Content Usage
+Rules"](https://www.xbox.com/en-us/developers/rules) using assets from Age of
+Empires Online, and it is not endorsed by or affiliated with Microsoft. The game
+content is used noncommercially; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full attribution and
+licences.
