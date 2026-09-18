@@ -346,6 +346,38 @@ def _scatter_point_schema() -> dict:
     )
 
 
+def _crafting_value_row_schema() -> dict:
+    """One row of ``GET /api/best-value``: a craftable item against its recipe.
+
+    The value ratio is the item's unit price divided by what its ingredients
+    cost at their own unit prices, so above 1 the item sells for more than it
+    costs to make.  Every row is actionable: an item selling below its crafting
+    cost is only returned while it has an active listing, since otherwise there
+    is nothing to buy and nothing worth crafting.
+    """
+    return _composed(
+        _ref("ItemSummary"),
+        _object(
+            {
+                "type": {"type": "string", "nullable": True, "description": "Gear type."},
+                "school": {"type": "string", "nullable": True, "description": "Crafting school that produces it."},
+                "craft_cost": {"type": "number", "description": "Sum of ingredient unit_price * quantity."},
+                "materials_priced": {"type": "integer", "description": "Ingredients that had a price."},
+                "materials_total": {"type": "integer"},
+                "price": {"type": "number", "description": "Unit price used: current median while listed now, else the historical median."},
+                "price_basis": {"type": "string", "enum": ["current", "historical"]},
+                "listed_now": {"type": "boolean", "description": "False when the price is the historical median (no live competition)."},
+                "current_median_unit_price": {"type": "number", "nullable": True},
+                "median_unit_price": {"type": "number", "description": "Historical median unit price."},
+                "active_count": {"type": "integer"},
+                "value_ratio": {"type": "number", "description": "price / craft_cost; above 1 means it sells for more than its ingredients cost."},
+            },
+            ["craft_cost", "price", "price_basis", "listed_now", "value_ratio"],
+            strict=False,
+        ),
+    )
+
+
 def _craft_material_schema() -> dict:
     """A material named by a crafting recipe or a Dismantler output.
 
@@ -684,6 +716,17 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "responses": {"200": _json_response("best-seller rows", _array_of("BestSellerRow"))},
             }
         },
+        "/api/best-value": {
+            "get": {
+                "summary": "Craftable items ranked by market price / crafting cost",
+                "description": "value_ratio = unit price / crafting cost. Above 1 the item sells for more than its ingredients cost — buying the materials and crafting it beats buying the item — so descending is 'best value' and ascending is 'worst value'. The price is the current median while the item is listed now, else its historical median (see listed_now / price_basis). An item is only omitted when it sells below its crafting cost and has no active listing: nothing to buy, nothing worth crafting.",
+                "parameters": [
+                    _query_param("order", "Sort column.", enum=list(store._CRAFT_VALUE_SORTS), default="value_ratio"),
+                    _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="desc"),
+                ],
+                "responses": {"200": _json_response("crafting-value rows", _array_of("CraftingValueRow"))},
+            }
+        },
         "/api/recently-removed": {
             "get": {
                 "summary": "Listings that vanished between the two most recent data points, or within a chosen time window",
@@ -720,6 +763,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
             "schemas": {
                 "BestSellerRow": _best_seller_row_schema(),
                 "CraftMaterial": _craft_material_schema(),
+                "CraftingValueRow": _crafting_value_row_schema(),
                 "Dismantle": _dismantle_schema(),
                 "Error": _error_schema(),
                 "HistogramBin": _histogram_bin_schema(),

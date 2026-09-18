@@ -126,6 +126,7 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
         "/api/item/{item_id}",
         "/api/not-on-sale",
         "/api/best-sellers",
+        "/api/best-value",
         "/api/recently-removed",
     ):
         assert path in spec["paths"], path
@@ -272,6 +273,7 @@ def test_endpoint_payloads_validate_against_the_spec(tmp_path):
     check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
     check("/api/not-on-sale", "/api/not-on-sale")
     check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
+    check("/api/best-value", "/api/best-value")
     check("/api/recently-removed", "/api/recently-removed")
     check("/api/item/nope", "/api/item/{item_id}", status=404)  # the Error schema
 
@@ -378,6 +380,46 @@ def test_best_sellers_endpoint(tmp_path):
     assert '"median_time": null' in body.decode()
     status, _, _ = app.handle("/api/best-sellers", {"min_sales": ["abc"]})
     assert status == 400
+
+
+def test_best_value_endpoint(tmp_path):
+    import json
+
+    db = tmp_path / "v.db"
+    materials = [
+        mk(1, item_id="4ArcticFoxFur", item_type="Material", price=100),
+        mk(2, item_id="4IlluminatedCodex", item_type="Material", price=50),
+        mk(3, item_id="4PhilosopherStone", item_type="Material", price=25),
+    ]
+    conn = store.open_store(db)
+    # E004 sells below cost, and the latest snapshot has no listing for it
+    store.record_snapshot(conn, [*materials, mk(4, item_id="FishingNet1H_E004", item_type="Trait", price=1000)], captured_at=1000.0)
+    store.record_snapshot(
+        conn,
+        [
+            *materials,
+            mk(5, item_id="FireThrower2H_E006", item_type="Trait", price=5000),
+            # same recipe, listed below what its ingredients cost: a buying deal
+            mk(6, item_id="FireThrower2H_E101", item_type="Trait", price=1000),
+        ],
+        captured_at=2000.0,
+    )
+    conn.close()
+    app = WebApp(str(db))
+
+    status, _, body = app.handle("/api/best-value")
+    assert status == 200
+    rows = json.loads(body)
+    assert [r["item_id"] for r in rows] == ["FireThrower2H_E006", "FireThrower2H_E101"]
+    assert rows[0]["craft_cost"] == 2300  # 18*100 + 8*50 + 4*25
+    assert rows[0]["value_ratio"] == round(5000 / 2300, 2)
+    assert rows[0]["listed_now"] is True
+    assert rows[1]["listed_now"] is True  # below cost, but worth buying
+    assert rows[1]["value_ratio"] == round(1000 / 2300, 2)
+
+    # ascending is the same metric read from the other end
+    _, _, body = app.handle("/api/best-value", {"dir": ["asc"]})
+    assert [r["item_id"] for r in json.loads(body)] == ["FireThrower2H_E101", "FireThrower2H_E006"]
 
 
 def test_post_snapshot_and_read_back(tmp_path):

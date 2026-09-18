@@ -170,7 +170,9 @@ function wireColumnSort(tabId, { apply, order = null, dir = null }) {
 		});
 	});
 	sync();
-	return state;
+	// Exposed so a view selector can drive the sort direction and still leave
+	// the header arrows correct.
+	return Object.assign(state, { sync });
 }
 
 function orderQuery(order, dir) {
@@ -189,6 +191,7 @@ const TAB_LOADERS = {
 	overview: loadOverview,
 	listings: loadListings,
 	"best-sellers": loadBestSellersTab,
+	"best-value": loadBestValue,
 	"not-on-sale": loadNotOnSale,
 	removed: loadRemoved,
 };
@@ -550,6 +553,49 @@ const bestSort = wireColumnSort("best-sellers", {
 	order: "median_time",
 	dir: "asc",
 	apply: loadBestSellers,
+});
+
+/* --- best value (crafting) ----------------------------------------------- */
+
+// value_ratio = unit price / crafting cost, so 2× means the item sells for
+// twice what its ingredients cost to buy.
+const fmtRatio = (r) =>
+	r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×";
+
+async function loadBestValue() {
+	const rows = await api(
+		"/api/best-value" + orderQuery(valueSort.order, valueSort.dir),
+	);
+	$("#value-body").innerHTML =
+		rows
+			.map(
+				(r) => `<tr>
+        <td>${itemName(r)}</td>
+        <td>${esc(r.type || "—")}</td>
+        <td>${rarityTag(r)}</td>
+        <td class="num">${fmtPrice(r.craft_cost)}</td>
+        <td class="num" title="${esc(r.listed_now ? "current median" : "historical median")}">${fmtPrice(r.price)}</td>
+        <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
+        <td class="num">${r.listed_now ? fmtInt(r.active_count) : '<span class="muted">not listed</span>'}</td>
+      </tr>`,
+			)
+			.join("") ||
+		'<tr><td colspan="7" class="muted">no craftable item has been observed yet</td></tr>';
+}
+
+const valueSort = wireColumnSort("best-value", {
+	order: "value_ratio",
+	dir: "desc",
+	apply: loadBestValue,
+});
+
+// Best/worst is only the direction of the ratio ordering; a column header
+// click takes over from there.
+$("#value-view").addEventListener("change", () => {
+	valueSort.order = "value_ratio";
+	valueSort.dir = $("#value-view").value;
+	valueSort.sync();
+	loadBestValue().catch((e) => console.error(e));
 });
 
 /* --- not on sale --------------------------------------------------------- */

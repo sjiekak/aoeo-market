@@ -27,6 +27,7 @@
 				</button>
 				<button type="button" data-tab="listings">Listings</button>
 				<button type="button" data-tab="best-sellers">Best sellers</button>
+				<button type="button" data-tab="best-value">Best value</button>
 				<button type="button" data-tab="not-on-sale">Not on sale</button>
 				<button type="button" data-tab="removed">Recently removed</button>
 				<button type="button" data-tab="item" id="nav-item" hidden>Item</button>
@@ -202,6 +203,65 @@
 							<tbody id="best-body"></tbody>
 						</table>
 					</div>
+				</div>
+			</section>
+
+			<!-- Best value -->
+			<section id="tab-best-value" hidden>
+				<div class="card">
+					<h2>
+						Craftable items by market price ÷ crafting cost
+						<span class="muted"
+							>(above 1× an item sells for more than its ingredients cost —
+							buy the materials, craft it, sell it; below 1× the item itself
+							is the cheaper way to get it)</span
+						>
+					</h2>
+					<p>
+						<label for="value-view" class="muted">View</label>
+						<select id="value-view">
+							<option value="desc">Best value — sells above cost</option>
+							<option value="asc">Worst value — sells below cost</option>
+						</select>
+						<span class="muted"
+							>· prices are per unit; a row with no current listing uses its
+							historical median and is marked "not listed" — one that sells
+							below cost <em>and</em> has no listing is left out, since
+							there is nothing to buy and nothing worth crafting</span
+						>
+					</p>
+					<p class="muted">
+						Click a column header to order: min first (↑), then max (↓), then
+						unsorted — the view selector is the default ratio ordering.
+					</p>
+					<table>
+						<thead>
+							<tr>
+								<th><button type="button" data-order="item">Item</button></th>
+								<th><button type="button" data-order="type">Type</button></th>
+								<th>
+									<button type="button" data-order="rarity">Rarity</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="craft_cost">
+										Craft cost/unit
+									</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="price">Price/unit</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="value_ratio">Value</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="listed_now">
+										On sale
+									</button>
+								</th>
+							</tr>
+						</thead>
+						<tbody id="value-body"></tbody>
+					</table>
 				</div>
 			</section>
 

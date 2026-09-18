@@ -43,7 +43,7 @@ from pathlib import Path
 
 import duckdb
 
-from .catalog import dismantle_of, icon_fields, name_of, rarity_of, recipe_of
+from .catalog import craftable_ids, dismantle_of, icon_fields, name_of, rarity_of, recipe_of, type_of
 from .catalog import fields as catalog_fields
 from .market import Listing
 
@@ -1045,5 +1045,119 @@ def best_sellers(
         key = lambda d: d[col]
     else:
         key = lambda d: (d[col] is None, d[col] or 0)
+    out.sort(key=key, reverse=direction == "desc")
+    return out
+
+
+# --- best value (crafting) -------------------------------------------------
+
+
+_CRAFT_VALUE_SORTS = {
+    "value_ratio": "value_ratio",
+    "item": "item_id",
+    "type": "type",
+    "rarity": "rarity_rank",
+    "craft_cost": "craft_cost",
+    "price": "price",
+    "listed_now": "listed_now",
+}
+
+
+def crafting_value(
+    conn: duckdb.DuckDBPyConnection,
+    *,
+    order: str = "value_ratio",
+    direction: str = "desc",
+) -> list[dict]:
+    """Craftable items ranked by market price ÷ crafting cost.
+
+    A ratio above 1 means the item sells for more than its ingredients cost, so
+    buying the materials and crafting it beats buying the item; below 1 the item
+    itself is the cheaper way to get it.  The larger the ratio the better.
+
+    Everything is per unit (a stack's total is divided by its count, as in every
+    other view) and an ingredient is priced the way the item page prices it: its
+    current median while listed now, else its historical median.  The item's own
+    ``price`` is likewise its current median unit price while it is listed now,
+    else its historical median — ``listed_now`` and ``price_basis`` say which,
+    since an item with no current listing has no live competition.
+
+    Every row is worth acting on: either the item sells above what its
+    ingredients cost (craft it), or it is listed right now (buy it).  Only the
+    combination that suits nobody — selling below cost with nothing on the
+    market — is left out.  An unlisted item is therefore kept when its
+    historical median still beats its crafting cost: nothing competes with the
+    craft, and the ratio says the market has paid more.
+
+    Items whose ingredients have not all been observed are skipped: a partial
+    cost would understate the cost and inflate the ratio.
+    """
+    latest = latest_snapshot(conn)
+    latest_id = latest["id"] if latest else None
+    every: dict[str, list[float]] = {}
+    active: dict[str, list[float]] = {}
+    spelling: dict[str, str] = {}
+    for r in _rows(conn, "SELECT item_id, item_price, item_count, snapshot_id FROM listings"):
+        key = r["item_id"].lower()
+        unit = r["item_price"] / max(r["item_count"], 1)
+        every.setdefault(key, []).append(unit)
+        spelling.setdefault(key, r["item_id"])
+        if r["snapshot_id"] == latest_id:
+            active.setdefault(key, []).append(unit)
+
+    def posted_price(key: str) -> float | None:
+        cur = active.get(key)
+        if cur:
+            return median(cur)
+        hist = every.get(key)
+        return median(hist) if hist else None
+
+    out: list[dict] = []
+    for item_id in craftable_ids():
+        if item_id not in every:
+            continue  # never observed: nothing to compare the cost against
+        recipe = recipe_of(item_id) or {}
+        materials = recipe.get("materials", [])
+        cost = 0.0
+        priced = 0
+        for m in materials:
+            price = posted_price((m.get("id") or "").lower())
+            if price is not None and m.get("quantity"):
+                cost += price * m["quantity"]
+                priced += 1
+        if not cost or priced != len(materials):
+            continue
+        current_median = median(active[item_id]) if active.get(item_id) else None
+        historical = median(every[item_id])
+        price = current_median if current_median is not None else historical
+        ratio = price / cost
+        if ratio < 1 and current_median is None:
+            continue  # below cost and nothing listed: neither crafting nor buying pays
+        row = {
+            "item_id": spelling.get(item_id, item_id),
+            "type": type_of(item_id),
+            "school": recipe.get("school"),
+            "craft_cost": round(cost, 2),
+            "materials_priced": priced,
+            "materials_total": len(materials),
+            "price": round(price, 2),
+            "price_basis": "current" if current_median is not None else "historical",
+            "listed_now": current_median is not None,
+            "current_median_unit_price": round(current_median) if current_median is not None else None,
+            "median_unit_price": round(historical),
+            "active_count": len(active.get(item_id, [])),
+            "value_ratio": round(ratio, 2),
+        }
+        row.update(catalog_fields(item_id))
+        rar = rarity_of(item_id)
+        row["rarity"] = rar[1] if rar else None
+        row["rarity_rank"] = rar[0] if rar else 0
+        out.append(row)
+
+    col = _CRAFT_VALUE_SORTS.get(order, "value_ratio")
+    if col in ("item_id", "type"):
+        key = lambda d: d.get(col) or ""
+    else:
+        key = lambda d: (d.get(col) is None, d.get(col) or 0)
     out.sort(key=key, reverse=direction == "desc")
     return out
