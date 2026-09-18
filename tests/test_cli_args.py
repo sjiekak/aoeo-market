@@ -5,14 +5,28 @@ import argparse
 import pytest
 
 from aoeo_market import cli_args
+from tests.auth_ref import random_device_hash
+
+#: A well-formed ``--device-hash``; the flag is mandatory, so every parse needs one.
+DEVICE_HASH = random_device_hash()
+
+
+def test_device_hash_arg_is_required():
+    """The per-install fingerprint is never defaulted: it must be passed."""
+    p = argparse.ArgumentParser()
+    cli_args.add_login_args(p)
+    with pytest.raises(SystemExit) as excinfo:
+        p.parse_args([])
+    assert excinfo.value.code == 2
+    assert p.parse_args(["--device-hash", DEVICE_HASH]).device_hash == DEVICE_HASH
 
 
 def test_local_ip_arg_is_optional():
     p = argparse.ArgumentParser()
     cli_args.add_login_args(p)
-    args = p.parse_args([])
+    args = p.parse_args(["--device-hash", DEVICE_HASH])
     assert args.local_ip is None
-    args = p.parse_args(["--local-ip", "10.1.2.3"])
+    args = p.parse_args(["--device-hash", DEVICE_HASH, "--local-ip", "10.1.2.3"])
     assert args.local_ip == "10.1.2.3"
 
 
@@ -47,9 +61,9 @@ def test_resolve_local_ip_reports_parser_error(monkeypatch):
 def test_xlive_crc_arg_is_optional():
     p = argparse.ArgumentParser()
     cli_args.add_login_args(p)
-    args = p.parse_args([])
+    args = p.parse_args(["--device-hash", DEVICE_HASH])
     assert args.xlive_crc is None
-    args = p.parse_args(["--xlive-crc", "8ca16109"])
+    args = p.parse_args(["--device-hash", DEVICE_HASH, "--xlive-crc", "8ca16109"])
     assert args.xlive_crc == "8ca16109"
 
 

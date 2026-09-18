@@ -4,11 +4,12 @@ The Celeste Network login arguments (``--local-ip``, ``--email``,
 ``--password``, ``--host``, ``--port``, ``--timeout``, ``--device-hash``,
 ``--xlive-crc``) are declared here once and attached by both
 :mod:`aoeo_market.cli` (``probe`` and ``fetch``) and
-:mod:`aoeo_market.live_probe`.  The per-install ``--device-hash`` default is
-the captured constant from :mod:`aoeo_market.auth`; ``--xlive-crc`` (the
-4-byte CRC-32 of the installed xlive.dll) defaults to the value published in
-the live Celeste manifest (:func:`aoeo_market.auth.fetch_xlive_crc32`), so
-the commands never infer a stale fingerprint.
+:mod:`aoeo_market.live_probe`.  ``--device-hash`` is **required**: the
+fingerprint is per install, so it is never defaulted and every caller supplies
+the value captured for its own machine.  ``--xlive-crc`` (the 4-byte CRC-32 of
+the installed xlive.dll) defaults to the value published in the live Celeste
+manifest (:func:`aoeo_market.auth.fetch_xlive_crc32`), so the commands never
+infer a stale fingerprint.
 
 ``--local-ip`` is optional: when it is omitted, the locally detected IPv4
 address (:func:`detect_local_ip`) is used as the default, exactly the value
@@ -87,8 +88,8 @@ def add_login_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--device-hash",
-        default=auth.DEVICE_HASH,
-        help="64-hex per-install fingerprint overriding the captured default",
+        required=True,
+        help="64-hex per-install fingerprint (required: it differs per install, so pass your own)",
     )
     parser.add_argument(
         "--xlive-crc",

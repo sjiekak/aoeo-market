@@ -24,7 +24,7 @@ What the live run confirmed:
 
 - `MarketClient.acquire_session(mail, password, local_ip, device_hash=...,
   xlive_crc32=...)` — the plaintext TCP 4564 "Celeste Network" login works
-  with the per-install `DEVICE_HASH` and the CRC-32 of the installed
+  with the caller's per-install device hash and the CRC-32 of the installed
   xlive.dll from `aoeo_market/auth.py` (`fetch_xlive_crc32`, the CLI default
   behind `--xlive-crc`; nothing is inferred in the client); the server
   re-issued the exact token seen in the 2026-08-13 capture.
@@ -40,8 +40,9 @@ What the live run confirmed:
 Re-validated live on 2026-09-04 after the 2026-09-03 server maintenance: the
 wire format is unchanged, but the maintenance shipped a new xlive.dll build
 (1.0.0.106). Its CRC-32 (`0x0961A18C` → little-endian `8ca16109`, published
-in `https://downloads.projectceleste.com/game_files/xlive.json`) and the new
-`DEVICE_HASH` (`1cb498f3…`) plus the current account password log in cleanly
+in `https://downloads.projectceleste.com/game_files/xlive.json`) and the
+re-captured device hash (`1cb498f3…`) plus the current account password log in
+cleanly
 (4564 re-issues the official client's token, the 1510 handshake returns the
 full 0xF2 bundle); the pre-upgrade values are rejected with an empty-session
 frame even with the correct password, and the stale secret-store password is
@@ -59,10 +60,10 @@ Rejection handling:
 
 Remaining caveats:
 
-- The device hash is **per install**. Running from another machine requires
-  re-capturing a login there and passing the new value via `--device-hash`
-  (or refreshing `DEVICE_HASH`, which the CLI defaults to). A future client
-  update may change it again — re-capture and refresh.
+- The device hash is **per install**, so `--device-hash` is **mandatory**:
+  capture a login on the machine you will run from and pass that 64-hex
+  value — there is no default to fall back on. A future client update may
+  change it again, so re-capture and pass the new value.
 - The xlive CRC-32 needs no capture: `--xlive-crc` defaults to the value in
   the live manifest (`fetch_xlive_crc32`); pass an explicit hex value to
   override (e.g. for replay tests). If the manifest cannot be fetched the
@@ -78,14 +79,14 @@ Remaining caveats:
 The live path is exposed as a command-line command:
 
 ```
-$ uv run python -m aoeo_market.cli fetch
+$ uv run python -m aoeo_market.cli fetch --device-hash <64-hex-fingerprint>
 Logging in over Celeste Network 51.91.169.108:4564 ...
 657 active listings
 
 ITEM_ID                      TYPE      LVL CNT    PRICE EXPIRES(d)  SELLER
 ...                          Trait      43   1    99000       30.0  4072340471133720139
 
-$ uv run python -m aoeo_market.cli fetch --watch
+$ uv run python -m aoeo_market.cli fetch --watch --device-hash <64-hex-fingerprint>
 ... same table, then ...
 [12:00:30] LISTED   tx=... ItemID @ 12345
 [12:01:00] REMOVED  tx=... ItemID -> EXPIRED   # vanished with <1 day left
@@ -95,11 +96,11 @@ $ uv run python -m aoeo_market.cli fetch --watch
 Credentials come from `--email`/`--password`, the `AOEO_EMAIL`/`AOEO_PASSWORD`
 environment variables, or an interactive prompt. The local IPv4 address is
 auto-detected from the kernel route and used as the default; pass
-`--local-ip <ip>` to override it. `--device-hash` (64 hex chars) defaults to
-the captured per-install value (`auth.DEVICE_HASH`); `--xlive-crc` (4 hex
-bytes) defaults to the CRC-32 published in the live xlive.json manifest
-(`auth.fetch_xlive_crc32`) — pass them explicitly when running from a
-different machine or to replay a specific build.
+`--local-ip <ip>` to override it. `--device-hash` (64 hex chars) is
+**required** — the fingerprint is per install, so it is never defaulted and
+you pass the value captured on this machine. `--xlive-crc` (4 hex bytes)
+defaults to the CRC-32 published in the live xlive.json manifest
+(`auth.fetch_xlive_crc32`); pass it explicitly to replay a specific build.
 
 ## Operational note
 

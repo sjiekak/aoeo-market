@@ -125,10 +125,10 @@ class MarketClient:
         register the session. See :mod:`aoeo_market.auth`.
 
         ``device_hash`` is the per-install fingerprint for the machine this
-        client runs on (:data:`aoeo_market.auth.DEVICE_HASH`) and
-        ``xlive_crc32`` is the little-endian CRC-32 of the installed xlive.dll
-        (:func:`aoeo_market.auth.fetch_xlive_crc32`).  Both are required — no
-        defaults are inferred here; the CLI layer chooses the values.
+        client runs on and ``xlive_crc32`` is the little-endian CRC-32 of the
+        installed xlive.dll (:func:`aoeo_market.auth.fetch_xlive_crc32`).  Both
+        are required — no defaults are inferred here; the CLI layer takes the
+        device hash from ``--device-hash`` and chooses the CRC.
         """
         from . import auth
 

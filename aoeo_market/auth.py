@@ -147,21 +147,6 @@ def build_install_signature(ip: str, xlive_crc32: bytes) -> bytes:
     return xlive_crc32 + ipaddress.IPv4Address(ip).packed + INSTALL_SIGNATURE_SUFFIX
 
 
-# 64-hex-char (32-byte) machine/install fingerprint.  Stable per install and
-# independent of the account: the 2026-08-13 and 2026-08-17 captures come from
-# the same machine but different accounts, and both send the value below; the
-# 2026-08-10 capture from another machine (same account as 2026-08-13) sends a
-# different value (kept with the other captured references in
-# ``tests/auth_ref.py``).
-#
-# The 2026-09-03 server maintenance changed the value: the updated official
-# client on machine B now sends ``1cb498f3…`` instead of the pre-upgrade
-# ``1257dc20…``, and the server rejects the pre-upgrade value (empty-session
-# rejection, verified live 2026-09-04).  Unlike the install-signature CRC
-# (which is derived from the live manifest), this is never defaulted: callers
-# pass the value for their machine explicitly.
-DEVICE_HASH = "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"  # machine B (post-upgrade)
-
 _HEADER = struct.Struct("<II")
 
 
@@ -224,10 +209,12 @@ def build_login_request(
 ) -> bytes:
     """Build the packet-1 login request body + header for the 4564 service.
 
-    ``device_hash`` is the per-install constant (:data:`DEVICE_HASH`) and
+    ``device_hash`` is the 64-hex-char per-install fingerprint and
     ``xlive_crc32`` is the little-endian CRC-32 of the installed xlive.dll
     (:func:`fetch_xlive_crc32`); both are required, the caller chooses which
-    values to replay.
+    values to replay.  Nothing here has a default fingerprint: the value is
+    per install, so the caller must capture and pass its own (the captured
+    reference values live in ``tests/auth_ref.py``).
     """
     if len(device_hash) != 64:
         raise ValueError("device_hash must be 64 hexadecimal characters")
@@ -351,10 +338,10 @@ class CelesteNetworkClient:
     ) -> GameSession:
         """Authenticate with email + password and return the game session.
 
-        ``device_hash`` is the per-install fingerprint (:data:`DEVICE_HASH`)
-        and ``xlive_crc32`` is the little-endian CRC-32 of the installed
-        xlive.dll (:func:`fetch_xlive_crc32`); both must be supplied by the
-        caller — no defaults are inferred.
+        ``device_hash`` is the per-install fingerprint and ``xlive_crc32`` is
+        the little-endian CRC-32 of the installed xlive.dll
+        (:func:`fetch_xlive_crc32`); both must be supplied by the caller — no
+        defaults are inferred.
 
         Performs the 4564 exchange: login request, login response, session
         register, then drains the (large) manifest reply. The manifest is not
