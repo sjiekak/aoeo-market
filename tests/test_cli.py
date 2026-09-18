@@ -4,6 +4,7 @@ from aoeo_market import cli as cli_mod
 from aoeo_market import store
 from aoeo_market.market import Listing
 from aoeo_market.observer import ListedEvent, RemovalReason, RemovedEvent
+from tests.auth_ref import random_device_hash
 
 
 def _mk(tx: int, **kw) -> Listing:
@@ -115,7 +116,7 @@ def test_probe_reports_rejected_login(monkeypatch, capsys):
         port=4564,
         timeout=5.0,
         game=False,
-        device_hash=auth_mod.DEVICE_HASH,
+        device_hash=random_device_hash(),
         xlive_crc=None,
     )
     assert cli_mod._probe(args) == 1
@@ -135,7 +136,7 @@ def test_live_commands_stop_when_xlive_crc_unresolvable(monkeypatch, capsys):
         raise auth_mod.XliveManifestError("could not fetch or parse the xlive manifest: offline")
 
     monkeypatch.setattr(cli_mod, "resolve_xlive_crc", boom)
-    args = SimpleNamespace(device_hash=auth_mod.DEVICE_HASH, xlive_crc=None)
+    args = SimpleNamespace(device_hash=random_device_hash(), xlive_crc=None)
     assert cli_mod._probe(args) == 2
     err = capsys.readouterr().err
     assert "error" in err

@@ -4,12 +4,11 @@ import pytest
 
 from aoeo_market import auth
 from tests.auth_ref import (
-    DEVICE_HASH_ALT,
-    DEVICE_HASH_PRE_UPGRADE,
     XLIVE_CRC32,
     XLIVE_CRC32_ALT,
     XLIVE_CRC32_PRE_UPGRADE,
     build_relogin_request,
+    random_device_hash,
 )
 
 
@@ -129,7 +128,8 @@ def test_fetch_xlive_crc32_wraps_bad_content(monkeypatch):
 
 
 def test_login_request_layout_constants():
-    pkt = auth.build_login_request("a@b.co", "pw", "192.168.0.17", device_hash=auth.DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
+    device_hash = random_device_hash()
+    pkt = auth.build_login_request("a@b.co", "pw", "192.168.0.17", device_hash=device_hash, xlive_crc32=XLIVE_CRC32)
     # 40 zero bytes, 0x01, version 2018 LE
     assert pkt[8:48] == b"\x00" * 40
     assert pkt[48] == 0x01
@@ -145,13 +145,14 @@ def test_login_request_layout_constants():
     assert pkt[69:73] == XLIVE_CRC32
     assert pkt[73:77] == bytes([192, 168, 0, 17])
     assert pkt[77:81] == b"\x40\x00\x00\x00"
-    assert pkt[81:145] == auth.DEVICE_HASH.encode("ascii")
+    assert pkt[81:145] == device_hash.encode("ascii")
 
 
 def test_relogin_request_layout():
     xuid = 0x0123456789ABCDEF
     token = "T" * 32
-    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token, device_hash=auth.DEVICE_HASH, xlive_crc32=XLIVE_CRC32)
+    device_hash = random_device_hash()
+    pkt = build_relogin_request("a@b.co", "pw", "192.168.0.17", xuid, token, device_hash=device_hash, xlive_crc32=XLIVE_CRC32)
     assert pkt[0:8] == (7).to_bytes(4, "little") + (8 + 137).to_bytes(4, "little")
     body = pkt[8:]
     # xuid + token + 0x01 + version + email + password + signature + hash
@@ -164,7 +165,7 @@ def test_relogin_request_layout():
     assert body[55:59] == (2).to_bytes(4, "little")
     assert body[59:61] == b"pw"
     assert body[61:73] == XLIVE_CRC32 + bytes([192, 168, 0, 17]) + b"\x40\x00\x00\x00"
-    assert body[73:137] == auth.DEVICE_HASH.encode("ascii")
+    assert body[73:137] == device_hash.encode("ascii")
     assert len(body) == 137
 
 
@@ -182,20 +183,17 @@ def test_login_builders_require_identity_values():
         cn.login("a@b.co", "pw", "192.168.0.17")
 
 
-def test_device_hash_constants():
-    """The current and captured per-install hashes are 64 hex chars each."""
-    assert len(auth.DEVICE_HASH) == 64
-    assert len(DEVICE_HASH_ALT) == 64
-    assert auth.DEVICE_HASH != DEVICE_HASH_ALT
-    int(auth.DEVICE_HASH, 16)
-    int(DEVICE_HASH_ALT, 16)
+def test_random_device_hash_is_well_formed():
+    """The generator produces a fresh, valid fingerprint on every call."""
+    value = random_device_hash()
+    assert len(value) == 64
+    int(value, 16)
+    assert value != random_device_hash()
 
 
 def test_post_upgrade_constants():
-    """The post-upgrade machine-B values are the ones the server accepts."""
-    assert auth.DEVICE_HASH == "1cb498f3c8c76b0a654698f36dec7a05d16a879f6d4f41c67e1b507c63c1106f"
+    """The post-upgrade xlive CRC-32 is the one the server accepts."""
     assert XLIVE_CRC32 == bytes.fromhex("8ca16109")
-    assert len(DEVICE_HASH_PRE_UPGRADE) == 64
     assert XLIVE_CRC32_PRE_UPGRADE == bytes.fromhex("f69b991a")
 
 
@@ -262,7 +260,7 @@ def test_login_raises_on_rejected_session(monkeypatch):
             "a@b.co",
             "pw",
             "192.168.0.17",
-            device_hash=auth.DEVICE_HASH,
+            device_hash=random_device_hash(),
             xlive_crc32=XLIVE_CRC32,
         )
     assert len(sock.sent) == 1  # only the login request; no register
@@ -292,7 +290,7 @@ def test_login_accepts_real_session(monkeypatch):
         "a@b.co",
         "pw",
         "192.168.0.17",
-        device_hash=auth.DEVICE_HASH,
+        device_hash=random_device_hash(),
         xlive_crc32=XLIVE_CRC32,
     )
     assert session.xuid == 12345

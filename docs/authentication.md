@@ -82,7 +82,8 @@ per-machine opaque value: it identifies the xlive.dll **build**. It is read
 from the published manifest — `https://downloads.projectceleste.com/game_files
 /xlive.json` → `"CRC32"` → 4 little-endian bytes — by
 `aoeo_market.auth.fetch_xlive_crc32`, which the CLI uses as the default for
-`--xlive-crc`. The device hash is a per-install value passed explicitly. The
+`--xlive-crc`. The device hash is a per-install value passed explicitly —
+`--device-hash` is mandatory and has no default. The
 local IPv4 is detected from the kernel route when the CLI's `--local-ip` is
 omitted (`aoeo_market.cli_args.detect_local_ip`).
 
@@ -218,8 +219,8 @@ wire format is unchanged, but the maintenance shipped a new xlive.dll build
 and the server rejects the pre-upgrade values with the empty-session
 rejection frame even when the password is correct; it also rejects the stale
 password with the new fingerprint — so **both** the current xlive CRC-32 and
-the refreshed `auth.DEVICE_HASH` (updated 2026-09-04), plus the current
-account password, are required. With them, the 4564 login re-issues the
+the re-captured per-install device hash (`1cb498f3…`, updated 2026-09-04),
+plus the current account password, are required. With them, the 4564 login re-issues the
 official client's token and the 1510 login handshake is answered with the
 full 0xF2 reply bundle.
 
@@ -230,10 +231,10 @@ Remaining caveats:
   self-updates whenever Project Celeste ships a new xlive.dll, so a stale
   CRC should never be sent again. (The captured build values are kept as
   test reference data in `tests/auth_ref.py`.)
-- The device hash is **per install**: running from another machine requires
-  re-capturing a login there and refreshing `DEVICE_HASH`. A future client
-  update may change it again — re-capture a login with the official client
-  and refresh the constant.
+- The device hash is **per install** and has no default: `--device-hash` is
+  mandatory, so running from another machine means re-capturing a login there
+  and passing that value. A future client update may change it again —
+  re-capture a login with the official client and pass the new value.
 - The account password lives in the secret store (`secret-tool lookup
   login.password aoeo.market`); it must be kept in sync with the real account
   password — a stale password reads exactly like a rejected fingerprint.
