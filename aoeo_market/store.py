@@ -1082,6 +1082,13 @@ def crafting_value(
     else its historical median — ``listed_now`` and ``price_basis`` say which,
     since an item with no current listing has no live competition.
 
+    Every row is worth acting on: either the item sells above what its
+    ingredients cost (craft it), or it is listed right now (buy it).  Only the
+    combination that suits nobody — selling below cost with nothing on the
+    market — is left out.  An unlisted item is therefore kept when its
+    historical median still beats its crafting cost: nothing competes with the
+    craft, and the ratio says the market has paid more.
+
     Items whose ingredients have not all been observed are skipped: a partial
     cost would understate the cost and inflate the ratio.
     """
@@ -1123,6 +1130,9 @@ def crafting_value(
         current_median = median(active[item_id]) if active.get(item_id) else None
         historical = median(every[item_id])
         price = current_median if current_median is not None else historical
+        ratio = price / cost
+        if ratio < 1 and current_median is None:
+            continue  # below cost and nothing listed: neither crafting nor buying pays
         row = {
             "item_id": spelling.get(item_id, item_id),
             "type": type_of(item_id),
@@ -1136,7 +1146,7 @@ def crafting_value(
             "current_median_unit_price": round(current_median) if current_median is not None else None,
             "median_unit_price": round(historical),
             "active_count": len(active.get(item_id, [])),
-            "value_ratio": round(price / cost, 2),
+            "value_ratio": round(ratio, 2),
         }
         row.update(catalog_fields(item_id))
         rar = rarity_of(item_id)

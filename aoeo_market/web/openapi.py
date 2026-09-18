@@ -351,7 +351,9 @@ def _crafting_value_row_schema() -> dict:
 
     The value ratio is the item's unit price divided by what its ingredients
     cost at their own unit prices, so above 1 the item sells for more than it
-    costs to make.
+    costs to make.  Every row is actionable: an item selling below its crafting
+    cost is only returned while it has an active listing, since otherwise there
+    is nothing to buy and nothing worth crafting.
     """
     return _composed(
         _ref("ItemSummary"),
@@ -717,7 +719,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "/api/best-value": {
             "get": {
                 "summary": "Craftable items ranked by market price / crafting cost",
-                "description": "value_ratio = unit price / crafting cost. Above 1 the item sells for more than its ingredients cost — buying the materials and crafting it beats buying the item — so descending is 'best value' and ascending is 'worst value'. The price is the current median while the item is listed now, else its historical median (see listed_now / price_basis).",
+                "description": "value_ratio = unit price / crafting cost. Above 1 the item sells for more than its ingredients cost — buying the materials and crafting it beats buying the item — so descending is 'best value' and ascending is 'worst value'. The price is the current median while the item is listed now, else its historical median (see listed_now / price_basis). An item is only omitted when it sells below its crafting cost and has no active listing: nothing to buy, nothing worth crafting.",
                 "parameters": [
                     _query_param("order", "Sort column.", enum=list(store._CRAFT_VALUE_SORTS), default="value_ratio"),
                     _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="desc"),

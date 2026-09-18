@@ -114,7 +114,7 @@ The intended deployment puts both components in one namespace:
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
-| **Best value** | Craftable items ranked by **market price ÷ crafting cost**: above 1× an item sells for more than its ingredients cost — buy the materials, craft it, sell it — and below 1× the item itself is the cheaper way to get it. A **View** selector flips between best and worst (equivalently, the ratio's direction), and an item with no current listing is priced off its historical median and marked *not listed*. Orderable by item, type, rarity, cost, price and ratio. |
+| **Best value** | Craftable items ranked by **market price ÷ crafting cost**: above 1× an item sells for more than its ingredients cost — buy the materials, craft it, sell it — and below 1× the item itself is the cheaper way to get it. A **View** selector flips between best and worst (equivalently, the ratio's direction), and an item with no current listing is priced off its historical median and marked *not listed*. Every row is actionable: an item selling below its crafting cost is only listed while it has an active listing, since otherwise there is nothing to buy and nothing worth crafting. Orderable by item, type, rarity, cost, price and ratio. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
 | **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — a **Crafting** card (recipe materials with amounts and a cost estimate) when a design produces it, a **Dismantle** card listing the materials the Gear Dismantler yields, a median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. Material icons link to their own item page and name themselves on hover. |
@@ -210,7 +210,10 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   historical median — `listed_now`/`price_basis` say which, because an item with
   no current listing has no live competition.  Items whose ingredients have not
   all been observed are left out: a partial cost would understate the cost and
-  inflate the ratio.  Best and worst are the same ranking read from either end.
+  inflate the ratio.  So is the one combination that suits nobody — selling
+  below cost *and* not listed, where there is nothing to buy and nothing worth
+  crafting: an unlisted item stays only while its historical median still beats
+  its crafting cost.  Best and worst are the same ranking read from either end.
 - **Item icons** — the item page shows the item's icon clipped in the browser
   from a sprite sheet via CSS `background-position`, exactly as celeste-search
   renders it (all sprite work is client-side).  The position index

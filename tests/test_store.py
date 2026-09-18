@@ -591,46 +591,77 @@ def test_item_lookup_is_case_insensitive(tmp_path):
     conn.close()
 
 
-def test_crafting_value_ranks_price_against_cost(tmp_path):
-    """price / crafting cost, using the current median while listed."""
+def test_crafting_value_drops_only_unlisted_items_below_cost(tmp_path):
+    """price / crafting cost, minus the rows that suit nobody."""
     conn = store.open_store(tmp_path / "m.db")
     materials = [
         mk(10, item_id="4ArcticFoxFur", item_type="Material", price=100),
         mk(11, item_id="4IlluminatedCodex", item_type="Material", price=50),
         mk(12, item_id="4PhilosopherStone", item_type="Material", price=25),
     ]
-    # both recipes are 18 fur + 8 codex + 4 stone -> 18*100 + 8*50 + 4*25 = 2300
+    # every recipe here is 18 fur + 8 codex + 4 stone -> 18*100 + 8*50 + 4*25 = 2300
     store.record_snapshot(
         conn,
-        [*materials, mk(1, item_id="FireThrower2H_E006", item_type="Trait", price=5000), mk(2, item_id="FireThrower2H_E101", item_type="Trait", price=1000)],
+        [
+            *materials,
+            mk(1, item_id="FireThrower2H_E006", item_type="Trait", price=5000),
+            mk(2, item_id="FireThrower2H_E101", item_type="Trait", price=8000),
+            mk(3, item_id="FishingNet1H_E004", item_type="Trait", price=1000),
+        ],
         captured_at=1000.0,
     )
-    # second snapshot: E101 vanishes, E006 is now 6000
+    # E006 gets dearer, E101 crashes below cost, E004 vanishes
     store.record_snapshot(
         conn,
-        [*materials, mk(3, item_id="FireThrower2H_E006", item_type="Trait", price=6000)],
+        [
+            *materials,
+            mk(4, item_id="FireThrower2H_E006", item_type="Trait", price=6000),
+            mk(5, item_id="FireThrower2H_E101", item_type="Trait", price=1000),
+        ],
         captured_at=2000.0,
     )
 
     by = {r["item_id"]: r for r in store.crafting_value(conn)}
+    # E004 sells below cost and has no listing: nothing to buy, nothing to craft
     assert set(by) == {"FireThrower2H_E006", "FireThrower2H_E101"}
 
-    listed = by["FireThrower2H_E006"]
-    assert listed["craft_cost"] == 2300
-    assert listed["price"] == 6000
-    assert listed["listed_now"] is True
-    assert listed["price_basis"] == "current"
-    assert listed["value_ratio"] == round(6000 / 2300, 2)
-    assert listed["type"] == "Fire Pot"
-    assert listed["name"] == "Naphtha-Filled Bag"
+    above = by["FireThrower2H_E006"]
+    assert above["craft_cost"] == 2300
+    assert above["price"] == 6000
+    assert above["listed_now"] is True
+    assert above["price_basis"] == "current"
+    assert above["value_ratio"] == round(6000 / 2300, 2)
+    assert above["type"] == "Fire Pot"
+    assert above["name"] == "Naphtha-Filled Bag"
 
-    gone = by["FireThrower2H_E101"]
-    assert gone["listed_now"] is False
-    assert gone["price_basis"] == "historical"
-    assert gone["price"] == 1000
-    assert gone["value_ratio"] == round(1000 / 2300, 2)
+    # E101 sells below cost but *is* listed, so buying it is the deal
+    below = by["FireThrower2H_E101"]
+    assert below["listed_now"] is True
+    assert below["price"] == 1000
+    assert below["value_ratio"] == round(1000 / 2300, 2)
 
     # best value first by default; ascending is the worst value
     assert [r["item_id"] for r in store.crafting_value(conn)] == ["FireThrower2H_E006", "FireThrower2H_E101"]
     assert [r["item_id"] for r in store.crafting_value(conn, direction="asc")] == ["FireThrower2H_E101", "FireThrower2H_E006"]
+
+    # E006 stays, E004 returns above cost, and E101 goes unlisted but its
+    # historical median (halfway between 8000 and 1000) still beats the cost
+    store.record_snapshot(
+        conn,
+        [
+            *materials,
+            mk(6, item_id="FireThrower2H_E006", item_type="Trait", price=6000),
+            mk(7, item_id="FishingNet1H_E004", item_type="Trait", price=4000),
+        ],
+        captured_at=3000.0,
+    )
+    by = {r["item_id"]: r for r in store.crafting_value(conn)}
+    assert set(by) == {"FishingNet1H_E004", "FireThrower2H_E006", "FireThrower2H_E101"}
+    assert by["FishingNet1H_E004"]["value_ratio"] == round(4000 / 2300, 2)
+
+    unlisted = by["FireThrower2H_E101"]
+    assert unlisted["listed_now"] is False
+    assert unlisted["price_basis"] == "historical"
+    assert unlisted["price"] == 4500
+    assert unlisted["value_ratio"] == round(4500 / 2300, 2)
     conn.close()
