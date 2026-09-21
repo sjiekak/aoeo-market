@@ -184,9 +184,11 @@ function orderQuery(order, dir) {
 /* --- tabs ---------------------------------------------------------------- */
 
 // Each tab fetches its data the first time it is shown, so a page that only
-// needs one view — the default overview, or an item page — never pays for the
+// needs one view — the landing search, or an item page — never pays for the
 // others. The loaders are function declarations, so referring to them here is
-// safe even though they are defined further down.
+// safe even though they are defined further down.  "search" is deliberately
+// absent: it is the landing view and fetches nothing until its form is
+// submitted.
 const TAB_LOADERS = {
 	overview: loadOverview,
 	listings: loadListings,
@@ -224,6 +226,52 @@ document.querySelectorAll("nav button").forEach((b) => {
 			$("#nav-item").hidden = true;
 		}
 		showTab(b.dataset.tab);
+	});
+});
+
+/* --- search (the landing view) ------------------------------------------- */
+
+// The only view that is useful empty: it runs entirely on submit, so opening
+// the dashboard costs no API traffic at all.
+const renderSearch = (rows) =>
+	rows
+		.map(
+			(r) => `<tr>
+        <td>${itemName(r)}</td>
+        <td>${esc(r.type || r.kind || "—")}</td>
+        <td>${rarityTag(r)}</td>
+        <td class="num">${
+					r.listed_now
+						? fmtPrice(r.current_median_unit_price)
+						: `<span class="muted" title="historical median">${fmtPrice(r.median_unit_price)}</span>`
+				}</td>
+        <td class="num">${r.listed_now ? fmtInt(r.active_count) : '<span class="muted">not listed</span>'}</td>
+      </tr>`,
+		)
+		.join("");
+
+async function runSearch(query) {
+	const q = query.trim();
+	const summary = $("#search-summary");
+	if (!q) {
+		$("#search-table").hidden = true;
+		$("#search-body").innerHTML = "";
+		summary.textContent = "";
+		return;
+	}
+	summary.textContent = `searching for “${q}”…`;
+	const rows = await api("/api/search?q=" + encodeURIComponent(q));
+	summary.textContent = rows.length
+		? `${rows.length} match${rows.length === 1 ? "" : "es"} for “${q}”`
+		: `no item id or name matches “${q}”`;
+	$("#search-table").hidden = rows.length === 0;
+	$("#search-body").innerHTML = renderSearch(rows);
+}
+
+document.querySelector("#search-form").addEventListener("submit", (e) => {
+	e.preventDefault();
+	runSearch($("#search-q").value).catch((err) => {
+		$("#search-summary").textContent = err.message;
 	});
 });
 
@@ -909,7 +957,7 @@ function route() {
 	const itemId = itemIdFromPath();
 	if (itemId === null) {
 		$("#nav-item").hidden = true;
-		showTab("overview");
+		showTab("search");
 		return;
 	}
 	$("#nav-item").hidden = false;

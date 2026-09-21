@@ -17,8 +17,8 @@ Endpoints are documented in the machine-readable OpenAPI 3.0 reference
 served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.web.openapi`
 from the routing metadata, so it cannot drift from the implementation).
 In short: probes at ``/healthz`` and ``/readyz``; dashboard reads under
-``/api/*`` (overview, listings, item history, not-on-sale, best-sellers,
-best-value, recently-removed); the single write endpoint
+``/api/*`` (overview, search, listings, item history, not-on-sale,
+best-sellers, best-value, recently-removed); the single write endpoint
 ``POST /api/snapshot`` (unauthenticated — keep the server on a private
 network or protect it with a reverse proxy when it is reachable beyond
 localhost).
@@ -130,6 +130,14 @@ class WebApp:
                         self._conn(),
                         order=query.get("order", ["median_unit_price"])[0],
                         direction=query.get("dir", ["desc"])[0],
+                    )
+                )
+            if path == "/api/search":
+                return self._json(
+                    store.search_items(
+                        self._conn(),
+                        query.get("q", [""])[0],
+                        limit=self._int_param(query, "limit", store.SEARCH_LIMIT),
                     )
                 )
             if path == "/api/best-sellers":

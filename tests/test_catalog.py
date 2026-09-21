@@ -86,6 +86,32 @@ def test_icon_fields_include_craftable():
     assert catalog.icon_fields("nope") == {}
 
 
+def test_search_ranks_exact_ids_first():
+    """An id or name fragment finds its item, exact ids first."""
+    exact = catalog.search("scepter2h_l001")
+    assert exact[0]["item_id"] == "scepter2h_l001"
+    assert exact[0]["name"] == "Ptah's Scepter of Construction"
+    assert exact[0]["rarity"] == "Legendary"
+    assert exact[0]["type"] == "Scepter"
+    assert exact[0]["craftable"] is True
+
+    # case-insensitive; a name fragment matches the item (and the design that
+    # creates it, which carries the same display name)
+    assert "scepter2h_l001" in [r["item_id"] for r in catalog.search("PTAH")]
+    assert catalog.search("  Ptah's Scepter  ")[0]["item_id"] in {"scepter2h_l001", "createscepter2h_l001"}
+
+    # an exact id lands first, ahead of the design whose id merely contains it
+    assert catalog.search("firethrower2h_e006")[0]["item_id"] == "firethrower2h_e006"
+    prefixed = catalog.search("firethrower2h_e00")
+    assert prefixed[0]["item_id"].startswith("firethrower2h_e00")
+
+    # nothing to search for, nothing found; limit trims
+    assert catalog.search("") == []
+    assert catalog.search("   ") == []
+    assert catalog.search("no-such-item-anywhere") == []
+    assert len(catalog.search("arrow", limit=4)) == 4
+
+
 def test_sprite_index_covers_every_catalog_icon():
     """Every catalog (kind, icon) resolves in the front-end sprite index.
 

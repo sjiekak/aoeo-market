@@ -112,6 +112,47 @@ def craftable_ids() -> list[str]:
     return [key for key, entry in _load().items() if entry.get("recipe")]
 
 
+def search(query: str, limit: int = 25) -> list[dict]:
+    """Entries whose wire id or display name contains ``query``.
+
+    Case-insensitive, and ranked so a known id lands first: exact id, then id
+    prefix, then name prefix, then any other substring match, id-ordered within
+    a rank.  Each row carries the same curated identity the JSON API attaches
+    to an item elsewhere (``fields`` plus type and rarity), so a caller only has
+    to add whatever market data it has.
+    """
+    needle = query.strip().lower()
+    if not needle:
+        return []
+    ranked: list[tuple[int, str]] = []
+    for key, entry in _load().items():
+        name = (entry.get("name") or "").lower()
+        if needle == key:
+            rank = 0
+        elif key.startswith(needle):
+            rank = 1
+        elif name.startswith(needle):
+            rank = 2
+        elif needle in key or needle in name:
+            rank = 3
+        else:
+            continue
+        ranked.append((rank, key))
+    ranked.sort()
+    out: list[dict] = []
+    for _, key in ranked[: max(limit, 0)]:
+        rar = rarity_of(key)
+        row: dict = {
+            "item_id": key,
+            "type": type_of(key),
+            "rarity": rar[1] if rar else None,
+            "rarity_rank": rar[0] if rar else 0,
+        }
+        row.update(fields(key))
+        out.append(row)
+    return out
+
+
 def _load_dismantle() -> dict:
     global _dismantle
     if _dismantle is None:

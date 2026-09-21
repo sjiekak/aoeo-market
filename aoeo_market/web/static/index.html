@@ -22,9 +22,8 @@
 				<span id="snapshot-info" class="muted"></span>
 			</div>
 			<nav>
-				<button type="button" data-tab="overview" class="active">
-					Overview
-				</button>
+				<button type="button" data-tab="search" class="active">Search</button>
+				<button type="button" data-tab="overview">Overview</button>
 				<button type="button" data-tab="listings">Listings</button>
 				<button type="button" data-tab="best-sellers">Best sellers</button>
 				<button type="button" data-tab="best-value">Best value</button>
@@ -35,8 +34,44 @@
 		</header>
 
 		<main>
+			<!-- Search: the landing view.  It has no loader, so opening the
+			     dashboard fetches nothing at all until the form is submitted. -->
+			<section id="tab-search">
+				<div class="card">
+					<h2>
+						Find an item
+						<span class="muted"
+							>(item id or display name; an item with no listing still
+							turns up, marked "not listed")</span
+						>
+					</h2>
+					<form id="search-form" class="controls">
+						<input
+							id="search-q"
+							type="search"
+							placeholder="search id or name…"
+							autocomplete="off"
+						/>
+						<button type="submit">Search</button>
+						<span id="search-summary" class="muted"></span>
+					</form>
+					<table id="search-table" hidden>
+						<thead>
+							<tr>
+								<th>Item</th>
+								<th>Type</th>
+								<th>Rarity</th>
+								<th class="num">Price/unit</th>
+								<th class="num">On sale</th>
+							</tr>
+						</thead>
+						<tbody id="search-body"></tbody>
+					</table>
+				</div>
+			</section>
+
 			<!-- Overview -->
-			<section id="tab-overview">
+			<section id="tab-overview" hidden>
 				<div id="empty-banner" class="banner" hidden>
 					No market data has been recorded yet.
 				</div>

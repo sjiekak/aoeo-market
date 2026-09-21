@@ -109,8 +109,13 @@ The intended deployment puts both components in one namespace:
 
 ## Views
 
+The dashboard opens on **Search**, which fetches nothing until its form is
+submitted; every other tab loads its data the first time it is opened, and an
+item page loads only that item.
+
 | Tab | What it shows |
 |---|---|
+| **Search** | The landing view: one box that matches a fragment of an item id or display name against the curated catalog — so an item nobody is selling still turns up, marked *not listed* — and lists the matches with their current median unit price (or the historical median when unlisted) and active-listing count. It issues no request until the form is submitted, so arriving at the dashboard costs no API traffic. |
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
@@ -143,6 +148,7 @@ returns the shell; the page then reports that the item was never observed.
 | `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |
 | `GET /api/listings?type=&q=&sort=&dir=` | active listings of the latest snapshot, each enriched with the catalog display name, kind, icon and authoritative rarity; `q` matches the item id and its display name |
+| `GET /api/search?q=&limit=` | catalog items whose id or display name contains `q`, ranked exact id, id prefix, name prefix, then any other match (an empty `q` matches nothing); each row carries `listed_now`, `active_count`, the current median unit price while listed and the historical median either way |
 | `GET /api/item/<item_id>` | the item's curated identity (name, kind, icon, rarity), its current listings and its previous (vanished) listings as full listing rows with the EXPIRED vs REMOVED classification, the price history (`series`, `points`), plus `recipe` (ingredients with quantities, per-unit prices and a `cost` estimate) and `dismantle` (the Gear Dismantler output for the item's type and rarity) — each omitted when unknown |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |

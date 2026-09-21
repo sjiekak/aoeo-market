@@ -150,7 +150,12 @@ def _item_summary_schema() -> dict:
             "description": {"type": "string"},
             "civilization": {"type": "string"},
             "age": {"type": "string"},
-            "event": {"type": "string", "description": "Seasonal event the item belongs to."},
+            "event": {
+                "type": "object",
+                "description": "Seasonal event the item belongs to.",
+                "properties": {"name": {"type": "string"}, "year": {"type": "integer"}},
+                "required": ["name", "year"],
+            },
         },
         ["item_id", "name", "rarity", "rarity_rank"],
         strict=False,
@@ -343,6 +348,32 @@ def _scatter_point_schema() -> dict:
             "price": {"type": "number", "description": "Unit price."},
         },
         ["t", "price"],
+    )
+
+
+def _search_result_schema() -> dict:
+    """One row of ``GET /api/search``: a catalog item and its market summary.
+
+    The match itself is catalogue-only, so an item that has never been listed is
+    still findable — it reports ``listed_now: false`` and null prices.
+    """
+    return _composed(
+        _ref("ItemSummary"),
+        _object(
+            {
+                "type": {"type": "string", "nullable": True, "description": "Gear type."},
+                "listed_now": {"type": "boolean", "description": "True when the item has an active listing."},
+                "active_count": {"type": "integer", "description": "Active listings backing the current median."},
+                "current_median_unit_price": {"type": "number", "nullable": True, "description": "Null unless the item is listed now."},
+                "median_unit_price": {
+                    "type": "number",
+                    "nullable": True,
+                    "description": "Historical median unit price; null when the item has never been observed.",
+                },
+            },
+            ["listed_now", "active_count", "current_median_unit_price", "median_unit_price"],
+            strict=False,
+        ),
     )
 
 
@@ -716,6 +747,17 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "responses": {"200": _json_response("best-seller rows", _array_of("BestSellerRow"))},
             }
         },
+        "/api/search": {
+            "get": {
+                "summary": "Catalog items matching an id or display-name fragment",
+                "description": "Case-insensitive substring match over the curated catalog, ranked exact id, id prefix, name prefix, then any other match. Rows carry the usual item identity plus a market summary: listed_now with its active listing count, the current median unit price while listed and the historical median either way (both null when the item has never been observed). An empty q matches nothing.",
+                "parameters": [
+                    _query_param("q", "Fragment of the item id or display name."),
+                    _query_param("limit", "Maximum rows.", schema_type="integer", default=store.SEARCH_LIMIT),
+                ],
+                "responses": {"200": _json_response("catalog search results", _array_of("SearchResult"))},
+            }
+        },
         "/api/best-value": {
             "get": {
                 "summary": "Craftable items ranked by market price / crafting cost",
@@ -769,6 +811,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                 "HistogramBin": _histogram_bin_schema(),
                 "ItemDetail": _item_detail_schema(),
                 "ItemSummary": _item_summary_schema(),
+                "SearchResult": _search_result_schema(),
                 "Listing": _listing_schema(),
                 "ListingRow": _listing_row_schema(),
                 "NameCount": _name_count_schema(),
