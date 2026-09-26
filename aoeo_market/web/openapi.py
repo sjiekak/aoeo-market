@@ -793,9 +793,9 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
         "info": {
             "title": "Merchant Zeno API",
             "description": (
-                "Read-only trading-intelligence API over the recorded history of the Project Celeste marketplace."
+                "Read-only trading-intelligence API over the recorded history of the Age of Empires Online (Project Celeste) Global Marketplace."
                 if not include_ingestion
-                else "Read-only trading-intelligence API over the recorded history of the Project Celeste marketplace, plus the snapshot ingestion endpoint (internal contract)."
+                else "Read-only trading-intelligence API over the recorded history of the Age of Empires Online (Project Celeste) Global Marketplace, plus the snapshot ingestion endpoint (internal contract)."
             ),
             "version": VERSION,
         },

@@ -1,8 +1,8 @@
-# Age of empire online market — read-only observer for the AoEO / Project Celeste Global Marketplace
+# Age of Empires Online (Project Celeste) Global Marketplace — read-only observer
 
 A headless client that watches the Age of Empires Online (Project Celeste)
-marketplace and emits events when items are **listed** and **removed**, with a
-best-effort **expired vs. removed** classification: a listing that vanishes
+Global Marketplace and emits events when items are **listed** and **removed**,
+with a best-effort **expired vs. removed** classification: a listing that vanishes
 with less than a day left on its countdown is EXPIRED, anything earlier is
 REMOVED (sold or withdrawn — indistinguishable from the outside). Hourly
 snapshots can be persisted to DuckDB and browsed on **Merchant Zeno**, the
