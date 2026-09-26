@@ -1,4 +1,9 @@
-# Age of Empires Online (Project Celeste) Global Marketplace — read-only observer
+<img src="images/savvy_merchant_zeno.webp" alt="Savvy Merchant Zeno" width="128" height="128">
+
+# Merchant Zeno
+
+Read-only observer for the Age of Empires Online (Project Celeste) Global
+Marketplace.
 
 A headless client that watches the Age of Empires Online (Project Celeste)
 Global Marketplace and emits events when items are **listed** and **removed**,
