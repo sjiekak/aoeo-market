@@ -45,6 +45,7 @@ import duckdb
 
 from .catalog import craftable_ids, dismantle_of, icon_fields, name_of, rarity_of, recipe_of, type_of
 from .catalog import fields as catalog_fields
+from .catalog import search as catalog_search
 from .market import Listing
 
 _SCHEMA_STATEMENTS = (
@@ -1160,4 +1161,63 @@ def crafting_value(
     else:
         key = lambda d: (d.get(col) is None, d.get(col) or 0)
     out.sort(key=key, reverse=direction == "desc")
+    return out
+
+
+# --- item search -----------------------------------------------------------
+
+SEARCH_LIMIT = 25
+MAX_SEARCH_LIMIT = 100
+
+
+def search_items(
+    conn: duckdb.DuckDBPyConnection,
+    query: str,
+    *,
+    limit: int = SEARCH_LIMIT,
+) -> list[dict]:
+    """Catalog items matching ``query``, each with its market summary.
+
+    The match is catalogue-only (:func:`aoeo_market.catalog.search`), so an item
+    that has never been observed is still findable — it simply reports
+    ``listed_now: false`` with null prices.  Otherwise the row carries the
+    current median unit price while the item is listed and the historical median
+    either way, the same numbers the item page and the best-value view use.
+    """
+    limit = max(1, min(limit, MAX_SEARCH_LIMIT))
+    matches = catalog_search(query, limit)
+    if not matches:
+        return []
+    latest = latest_snapshot(conn)
+    latest_id = latest["id"] if latest else None
+    keys = [row["item_id"].lower() for row in matches]
+    every: dict[str, list[float]] = {}
+    active: dict[str, list[float]] = {}
+    spelling: dict[str, str] = {}
+    placeholders = ", ".join("?" * len(keys))
+    for r in _rows(
+        conn,
+        f"""
+        SELECT item_id, item_price, item_count, snapshot_id
+        FROM listings WHERE lower(item_id) IN ({placeholders})
+        """,
+        keys,
+    ):
+        key = r["item_id"].lower()
+        unit = r["item_price"] / max(r["item_count"], 1)
+        every.setdefault(key, []).append(unit)
+        spelling.setdefault(key, r["item_id"])
+        if r["snapshot_id"] == latest_id:
+            active.setdefault(key, []).append(unit)
+
+    out: list[dict] = []
+    for row in matches:
+        key = row["item_id"].lower()
+        current, historical = active.get(key), every.get(key)
+        row["item_id"] = spelling.get(key, row["item_id"])
+        row["listed_now"] = bool(current)
+        row["active_count"] = len(current or [])
+        row["current_median_unit_price"] = round(median(current)) if current else None
+        row["median_unit_price"] = round(median(historical)) if historical else None
+        out.append(row)
     return out

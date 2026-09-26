@@ -122,6 +122,7 @@ def test_openapi_spec_is_served_and_in_sync(tmp_path):
         "/healthz",
         "/readyz",
         "/api/overview",
+        "/api/search",
         "/api/listings",
         "/api/item/{item_id}",
         "/api/not-on-sale",
@@ -272,6 +273,9 @@ def test_endpoint_payloads_validate_against_the_spec(tmp_path):
     check("/api/item/Sword_U_III", "/api/item/{item_id}")
     check("/api/item/Axe_R_I", "/api/item/{item_id}")  # exercises previous[] with a vanished listing
     check("/api/not-on-sale", "/api/not-on-sale")
+    check("/api/search", "/api/search", {"q": ["axe"]})
+    check("/api/search", "/api/search", {"q": ["axe"], "limit": ["1"]})
+    check("/api/search", "/api/search", {"q": [""]})  # nothing to match
     check("/api/best-sellers", "/api/best-sellers", {"min_sales": ["0"]})
     check("/api/best-value", "/api/best-value")
     check("/api/recently-removed", "/api/recently-removed")
@@ -379,6 +383,39 @@ def test_best_sellers_endpoint(tmp_path):
     assert "Axe_R_I" in body.decode()
     assert '"median_time": null' in body.decode()
     status, _, _ = app.handle("/api/best-sellers", {"min_sales": ["abc"]})
+    assert status == 400
+
+
+def test_search_endpoint(tmp_path):
+    import json
+
+    # Search matches the curated catalog, so the seeded ids have to be real ones
+    db = tmp_path / "s.db"
+    conn = store.open_store(db)
+    store.record_snapshot(conn, [mk(1, item_id="4ArcticFoxFur", item_type="Material", price=100)], captured_at=1000.0)
+    conn.close()
+    app = WebApp(str(db))
+
+    _, _, body = app.handle("/api/search", {"q": ["arcticfox"]})
+    fox = next(r for r in json.loads(body) if r["item_id"] == "4ArcticFoxFur")
+    assert fox["rarity"]  # the curated identity rides along
+    assert fox["listed_now"] is True
+    assert fox["active_count"] == 1
+    assert fox["current_median_unit_price"] == 100
+    assert fox["median_unit_price"] == 100
+
+    # an item the market has never seen is still findable, with no prices
+    _, _, body = app.handle("/api/search", {"q": ["scepter2h_l001"]})
+    rows = json.loads(body)
+    assert rows[0]["item_id"] == "scepter2h_l001"
+    assert rows[0]["listed_now"] is False
+    assert rows[0]["current_median_unit_price"] is None
+    assert rows[0]["median_unit_price"] is None
+
+    _, _, body = app.handle("/api/search", {"q": ["arrow"], "limit": ["1"]})
+    assert len(json.loads(body)) == 1
+
+    status, _, _ = app.handle("/api/search", {"limit": ["abc"]})
     assert status == 400
 
 

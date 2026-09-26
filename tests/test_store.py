@@ -665,3 +665,31 @@ def test_crafting_value_drops_only_unlisted_items_below_cost(tmp_path):
     assert unlisted["price"] == 4500
     assert unlisted["value_ratio"] == round(4500 / 2300, 2)
     conn.close()
+
+
+def test_search_items_attaches_whatever_market_data_exists(tmp_path):
+    """Search matches the catalog, so an item nobody lists is still findable."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="4ArcticFoxFur", item_type="Material", price=100)], captured_at=1000.0)
+
+    rows = store.search_items(conn, "arcticfox")
+    fox = next(r for r in rows if r["item_id"] == "4ArcticFoxFur")
+    assert fox["listed_now"] is True
+    assert fox["active_count"] == 1
+    assert fox["current_median_unit_price"] == 100
+    assert fox["median_unit_price"] == 100
+    assert fox["name"] == "Arctic Fox Furs"
+
+    # a craftable item that has never been listed comes back with no prices
+    never = next(r for r in store.search_items(conn, "scepter2h_l001") if r["item_id"] == "scepter2h_l001")
+    assert never["listed_now"] is False
+    assert never["active_count"] == 0
+    assert never["current_median_unit_price"] is None
+    assert never["median_unit_price"] is None
+    assert never["name"] == "Ptah's Scepter of Construction"
+    assert never["craftable"] is True
+
+    # nothing to search for matches nothing, and the limit is honoured
+    assert store.search_items(conn, "") == []
+    assert len(store.search_items(conn, "arrow", limit=3)) == 3
+    conn.close()
