@@ -22,6 +22,29 @@ body {
 		sans-serif;
 }
 
+/* Background photo: Shreyas Sane. A fixed pseudo-element rather than `background-attachment:
+   fixed`, which iOS Safari mishandles. The scrim is deliberately light so the
+   sunset reads through; text not inside an opaque `.card` carries its own
+   contrast backstop (see `.item-head`, `#item-back`, `.banner`, `footer`).
+   `center 68%` frames the horizon and camels instead of empty sky, because
+   `cover` crops this tall photo hard on wide viewports. */
+body::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	background:
+		linear-gradient(
+			180deg,
+			rgba(15, 23, 42, 0.86) 0%,
+			rgba(15, 23, 42, 0.42) 45%,
+			rgba(15, 23, 42, 0.88) 100%
+		),
+		url("/static/backgrounds/shreyas-sane-camel.webp") center 68% / cover
+			no-repeat;
+}
+
 header {
 	display: flex;
 	align-items: center;
@@ -97,6 +120,15 @@ h2 {
 }
 .link:hover {
 	text-decoration: underline;
+}
+
+/* Only `#item-back` sits outside a card, directly on the photo. */
+#item-back {
+	background: rgba(15, 23, 42, 0.72);
+	backdrop-filter: blur(6px);
+	border-radius: 8px;
+	padding: 6px 10px;
+	margin-bottom: 12px;
 }
 
 .card {
@@ -274,12 +306,15 @@ tbody tr:hover {
 }
 
 .banner {
-	background: rgba(251, 191, 36, 0.1);
+	background:
+		linear-gradient(rgba(251, 191, 36, 0.12), rgba(251, 191, 36, 0.12)),
+		rgba(15, 23, 42, 0.75);
 	border: 1px solid var(--accent);
 	color: var(--accent);
 	border-radius: 12px;
 	padding: 14px 18px;
 	margin-bottom: 20px;
+	backdrop-filter: blur(6px);
 }
 .banner code {
 	background: rgba(0, 0, 0, 0.3);
@@ -292,6 +327,10 @@ tbody tr:hover {
 	align-items: flex-start;
 	gap: 16px;
 	margin-bottom: 16px;
+	background: rgba(15, 23, 42, 0.72);
+	backdrop-filter: blur(6px);
+	border-radius: 12px;
+	padding: 16px;
 }
 .item-head-text {
 	min-width: 0;
@@ -367,11 +406,30 @@ a.material-icon {
 	line-height: 0;
 }
 
+/* Backstop so the footer and item header stay readable over the photo. */
 footer {
 	text-align: center;
 	padding: 28px;
 	border-top: 1px solid var(--line);
+	background: rgba(15, 23, 42, 0.72);
+	backdrop-filter: blur(6px);
 }
 footer code {
+	color: var(--accent);
+}
+
+footer .credit {
+	margin: 10px 0 0;
+	font-size: 13px;
+}
+
+footer .credit a {
+	color: var(--text);
+	text-decoration-color: var(--line);
+	text-underline-offset: 2px;
+}
+
+footer .credit a:hover,
+footer .credit a:focus-visible {
 	color: var(--accent);
 }
