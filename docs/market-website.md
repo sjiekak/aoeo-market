@@ -1,4 +1,4 @@
-# Market website — trading intelligence dashboard
+# Merchant Zeno — trading intelligence dashboard
 
 A read-only website over the Project Celeste marketplace: every hour a cron job
 fetches the live market and posts an immutable snapshot to the website's API,

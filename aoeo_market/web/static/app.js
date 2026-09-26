@@ -1,4 +1,4 @@
-/* AoEO Market dashboard — single-page app backed by the /api JSON endpoints. */
+/* Merchant Zeno dashboard — single-page app backed by the /api JSON endpoints. */
 
 "use strict";
 
@@ -821,7 +821,7 @@ function renderItemImage(it) {
 async function loadItem(itemId) {
 	const it = await api("/api/item/" + encodeURIComponent(itemId));
 	// Each item is its own page, so it gets its own document title.
-	document.title = `${it.name || it.item_id} — AoEO Market`;
+	document.title = `${it.name || it.item_id} — Merchant Zeno`;
 	$("#item-title").textContent = it.name || it.item_id;
 	const nav = it.name || it.item_id;
 	$("#nav-item").textContent = nav.length > 24 ? nav.slice(0, 24) + "…" : nav;
@@ -965,7 +965,7 @@ function route() {
 		itemId.length > 24 ? itemId.slice(0, 24) + "…" : itemId;
 	showTab("item");
 	loadItem(itemId).catch((e) => {
-		document.title = "Item not found — AoEO Market";
+		document.title = "Item not found — Merchant Zeno";
 		$("#item-title").textContent = "not found";
 		$("#item-meta").textContent = e.message;
 	});

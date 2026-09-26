@@ -791,7 +791,7 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
     return {
         "openapi": "3.0.3",
         "info": {
-            "title": "AoEO Market API",
+            "title": "Merchant Zeno API",
             "description": (
                 "Read-only trading-intelligence API over the recorded history of the Project Celeste marketplace."
                 if not include_ingestion
