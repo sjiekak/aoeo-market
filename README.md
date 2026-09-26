@@ -1,20 +1,16 @@
-<img src="images/savvy_merchant_zeno.webp" alt="Savvy Merchant Zeno" width="128" height="128">
+<p align="center">
+<img src="images/savvy_merchant_zeno.webp" height="128">
+</p>
+<h1 align="center">
+Merchant Zeno
+</h1>
+<p align="center">
+Explore Age of Empires Online marketplace : current items, historical prices
+<p>
 
-# Merchant Zeno
+## About
 
-Read-only observer for the Age of Empires Online (Project Celeste) Global
-Marketplace.
-
-A headless client that watches the Age of Empires Online (Project Celeste)
-Global Marketplace and emits events when items are **listed** and **removed**,
-with a best-effort **expired vs. removed** classification: a listing that vanishes
-with less than a day left on its countdown is EXPIRED, anything earlier is
-REMOVED (sold or withdrawn — indistinguishable from the outside). Hourly
-snapshots can be persisted to DuckDB and browsed on **Merchant Zeno**, the
-dashboard:
-price distributions and history, best-selling items ranked by time-to-sale,
-items currently not on sale, recent sold/expired removals, and other trading
-intelligence.
+AOEO Market, aka Merchant Zenor is a read-only observer for the [Age of Empires Online (Project Celeste)](https://www.projectceleste.com/) Global Marketplace.
 
 ## Quick start (offline, works today)
 
@@ -58,7 +54,6 @@ a live poll returns the whole marketplace (all six categories — gear, advisors
 consumables, designs, materials, blueprints) and the observer emits LISTED /
 REMOVED events across polls. Run `uv run pytest` to validate everything that
 does not need a live server.
-
 
 ```
 aoeo_market/
