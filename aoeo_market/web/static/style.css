@@ -432,18 +432,22 @@ footer code {
 	color: var(--accent);
 }
 
-footer .credit {
+footer .credit,
+footer .notice {
 	margin: 10px 0 0;
 	font-size: 13px;
 }
 
-footer .credit a {
+footer .credit a,
+footer .notice a {
 	color: var(--text);
 	text-decoration-color: var(--line);
 	text-underline-offset: 2px;
 }
 
 footer .credit a:hover,
-footer .credit a:focus-visible {
+footer .credit a:focus-visible,
+footer .notice a:hover,
+footer .notice a:focus-visible {
 	color: var(--accent);
 }
