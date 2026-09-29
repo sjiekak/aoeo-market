@@ -200,12 +200,10 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   `materials_priced` saying how many contributed, since a partial estimate is
   still useful).  The **Dismantle** card shows what the in-game Gear Dismantler
   yields, looked up from `aoeo_market/data/dismantle_map.json` by the item's
-  gear type and rarity.  That map is read from the client's Dismantler Output
-  Guide textures; the game computes the *amounts* server-side, so only the
-  materials are recorded — all 35 types × 4 rarities × 3 materials.  Tiers
-  within one chain (copper/bronze/iron/gold, pine/oak/ebony/guayacan, …) are
-  near-identical in the art, so the reader disambiguates those by hue; every
-  slot is filled.  The Dismantler refuses *store-bought, Event and Questline
+  gear type and rarity.  That map records which materials each gear type yields
+  at each rarity — all 35 types × 4 rarities × 3 materials.  The game computes
+  the *amounts* server-side, so no quantities are recorded.  The Dismantler
+  refuses *store-bought, Event and Questline
   completion reward* gear, so an excluded item reports no dismantle output at
   all; only the event class is reliably detectable from the curated catalog
   today (`catalog.is_dismantlable`), which is the rule applied for now.

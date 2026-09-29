@@ -38,8 +38,8 @@ RARITY_RANK = {
 }
 
 _CATALOG_PATH = Path(__file__).with_name("data") / "catalog.json"
-# Gear Dismantler output, keyed by gear type and item rarity (see
-# scripts/build_catalog.py's sibling, tmp/gamefiles/build_dismantle_map.py).
+# Gear Dismantler output: a bare gear type -> tier map, each tier carrying the
+# guide's per-rarity material lists and the crafting school.
 _DISMANTLE_PATH = Path(__file__).with_name("data") / "dismantle_map.json"
 
 _catalog: dict[str, dict] | None = None
@@ -153,7 +153,8 @@ def search(query: str, limit: int = 25) -> list[dict]:
     return out
 
 
-def _load_dismantle() -> dict:
+def _load_dismantle() -> dict[str, dict]:
+    """Gear type -> ``{"dismantle": {rarity: [material_id, ...]}, "school": ...}``."""
     global _dismantle
     if _dismantle is None:
         _dismantle = json.loads(_DISMANTLE_PATH.read_text(encoding="utf-8"))
@@ -185,7 +186,7 @@ def dismantle_of(item_id: str) -> dict | None:
     entry = lookup(item_id)
     if not entry or not entry.get("type") or not is_dismantlable(entry):
         return None
-    tier = _load_dismantle().get("types", {}).get(entry["type"])
+    tier = _load_dismantle().get(entry["type"])
     if not tier:
         return None
     rar = rarity_of(item_id)
