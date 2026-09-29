@@ -333,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _Handler.app = WebApp(args.db)
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
-    print(f"Serving AoEO market dashboard on http://{args.host}:{args.port} (db: {args.db})")
+    print(f"Serving the Merchant Zeno dashboard on http://{args.host}:{args.port} (db: {args.db})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

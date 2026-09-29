@@ -59,6 +59,20 @@ header {
 	flex-wrap: wrap;
 }
 
+.brand {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+/* Decorative: the wordmark beside it already names the site. */
+.brand-logo {
+	width: 32px;
+	height: 32px;
+	border-radius: 8px;
+	flex: none;
+}
+
 .brand h1 {
 	margin: 0;
 	font-size: 20px;
