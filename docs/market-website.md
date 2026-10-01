@@ -8,13 +8,13 @@ as interactive charts and tables.
 ## Architecture
 
 ```
-cron ── hourly ──> fetch --store <url> ── POST /api/snapshot ──> aoeo_market.web
-                                                                      │
-                                                                      ▼
-                                                              market.db (DuckDB, append-only)
-                                                                      │
-                                                                      ▼
-                                                            browser (Chart.js dashboard)
+cron ── hourly ──> fetch --store <url> ── POST /api/snapshot ──> web :8001 (write)
+                                                                     │
+                                                                     ▼
+                                                             market.db (DuckDB, append-only)
+                                                                     │
+                                                                     ▼
+browser ── GET /api/* ────────────────────────────────────────> web :8000 (read)
 ```
 
 The **web server is the single owner of the database**: the fetcher never
@@ -22,6 +22,13 @@ opens the file, it only POSTs JSON. That keeps DuckDB's one-writer model
 trivially satisfied and maps directly onto Kubernetes — the web app runs as a
 **StatefulSet** pod owning the database volume, and `fetch --store <url>`
 runs as a **CronJob** that only needs network access to the service.
+
+The one process listens on **two ports**: the dashboard and the read API on
+`--port` (8000), the snapshot write endpoint on `--write-port` (8001).  The
+split is a network boundary, not a second database owner — both listeners
+share one `WebApp` and its write lock — so an operator can publish only the
+read port and leave the unauthenticated ingestion endpoint reachable by the
+fetcher alone (`--write-host` binds it to another interface).
 
 - `aoeo_market/store.py` — the DuckDB schema and the snapshot/analytics API.
   Two tables: `snapshots(id, captured_at)` and
@@ -37,26 +44,28 @@ runs as a **CronJob** that only needs network access to the service.
   DuckDB is a single-file, in-process OLAP engine (no server to deploy): the
   columnar engine keeps the dashboards fast as the history grows, and its SQL
   surface (medians, percentiles, ILIKE) matches the analytics queries.
-- `aoeo_market/web/` — the website package: `server.py` (a stdlib
-  `ThreadingHTTPServer` serving the dashboard page and the JSON API,
-  including the `POST /api/snapshot` write endpoint — validated, serialized
-  by a write lock), `openapi.py` (the generated OpenAPI reference served at
-  `/openapi.json`), and `static/` (the single-page dashboard: vanilla JS +
-  Chart.js from the jsDelivr CDN).  The only third-party dependency of the
-  whole site is `duckdb`.
-- `aoeo_market/cli.py` — `fetch --store` accepts either the web URL (POST)
-  or a local DuckDB file path (development fallback; the file form is not
-  meant for production, where only the web pod owns the volume).
+- `aoeo_market/web/` — the website package: `server.py` (two stdlib
+  `ThreadingHTTPServer` listeners over one `WebApp`: the dashboard page and
+  the JSON read API on `--port`, and the `POST /api/snapshot` write endpoint —
+  validated, serialized by a write lock — on `--write-port`), `openapi.py`
+  (the generated OpenAPI reference served at `/openapi.json`), and `static/`
+  (the single-page dashboard: vanilla JS + Chart.js from the jsDelivr CDN).
+  The only third-party dependency of the whole site is `duckdb`.
+- `aoeo_market/cli.py` — `fetch --store` accepts either the web URL of the
+  server's **write port** (POST `/api/snapshot`) or a local DuckDB file path
+  (development fallback; the file form is not meant for production, where only
+  the web pod owns the volume).
 
 ## Setup
 
 ```bash
-# 1. serve the dashboard (sole owner of market.db)
-uv run python -m aoeo_market.web --db market.db --port 8000
-# -> http://127.0.0.1:8000
+# 1. serve the dashboard (read API :8000) and the snapshot write API (:8001);
+#    the process is the sole owner of market.db
+uv run python -m aoeo_market.web --db market.db --port 8000 --write-port 8001
+# -> http://127.0.0.1:8000  (POST /api/snapshot on http://127.0.0.1:8001)
 
-# 2. snapshot the market once through its API (add --local-ip <ip> if needed)
-uv run python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet
+# 2. snapshot the market once through the write port (add --local-ip <ip> if needed)
+uv run python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8001 --quiet
 ```
 
 ### Cron (hourly snapshots)
@@ -64,7 +73,7 @@ uv run python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:
 Edit your crontab (`crontab -e`) and add one line, substituting the real paths:
 
 ```
-0 * * * * cd /home/you/aoeo-market && /usr/bin/env AOEO_EMAIL=you@example.com AOEO_PASSWORD=secret .venv/bin/python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet >> fetch.log 2>&1
+0 * * * * cd /home/you/aoeo-market && /usr/bin/env AOEO_EMAIL=you@example.com AOEO_PASSWORD=secret .venv/bin/python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8001 --quiet >> fetch.log 2>&1
 ```
 
 - Runs at minute 0 of every hour; `--quiet` keeps the log to one line per run
@@ -80,7 +89,7 @@ Edit your crontab (`crontab -e`) and add one line, substituting the real paths:
 
 A systemd timer is an alternative (systemd ≥ 2.5x runs `%u` user units);
 `OnCalendar=hourly` with `ExecStart=/home/you/aoeo-market/.venv/bin/python -m
-aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8000 --quiet`
+aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8001 --quiet`
 in a user service is equivalent.
 
 ### Kubernetes (same namespace)
@@ -88,25 +97,27 @@ in a user service is equivalent.
 The intended deployment puts both components in one namespace:
 
 - **Web app** — a StatefulSet with **exactly one replica** (DuckDB allows one
-  writer per file), `--host 0.0.0.0`, the `market.db` file on a PersistentVolume,
+  writer per file), `--host 0.0.0.0 --port 8000 --write-port 8001`, the
+  `market.db` file on a PersistentVolume,
   `GET /healthz` as the liveness probe and `GET /readyz` as the readiness
-  probe (readiness answers 503 until the database file is initialized and
-  openable).  An **init container** runs
+  probe (both on the read port; readiness answers 503 until the database file
+  is initialized and openable).  An **init container** runs
   `python -m aoeo_market.cli init-db --db /data/market.db` first, so the pod
   always starts with a ready, schema-complete database on the volume
   (idempotent — safe on every restart).  Upgrading a volume that predates the
   absolute expiry needs one extra run of
   `python -m aoeo_market.cli backfill --db /data/market.db` to fill it.
 - **Fetcher** — a CronJob (`schedule: "0 * * * *"`) running
-  `python -m aoeo_market.cli fetch --store http://<service>:8000 --quiet`
+  `python -m aoeo_market.cli fetch --store http://<service>:8001 --quiet`
   with the credentials in a Secret (`AOEO_EMAIL` / `AOEO_PASSWORD`).  Same
-  namespace means the short Service DNS name works.
+  namespace means the short Service DNS name works; the Service needs port
+  8001 (the write API) for the CronJob as well as 8000 for readers.
 - **Trust boundary** — the `POST /api/snapshot` endpoint is unauthenticated
-  and served on the same port as the dashboard, so the namespace is the
-  security boundary: keep the Service cluster-internal (view the dashboard
-  via `kubectl port-forward` or a VPN), or put basic auth in front of it at
-  the ingress.  A NetworkPolicy restricting the web pod's ingress to the
-  fetcher's pods is the cheap extra hardening.
+  but served on its **own port** (8001), separate from the dashboard (8000),
+  so only the write port has to stay off the public network: publish 8000 at
+  the ingress, keep 8001 cluster-internal (or bind it to a loopback/overlay
+  address with `--write-host`).  A NetworkPolicy allowing only the fetcher's
+  pods to reach port 8001 is the cheap extra hardening.
 
 ## Views
 
@@ -142,6 +153,11 @@ returns the shell; the page then reports that the item was never observed.
 
 ## JSON API
 
+Every route below except `POST /api/snapshot` is served on the **read port**
+(`--port`, 8000). The write endpoint is served only on the **write port**
+(`--write-port`, 8001); each port answers a request for the other one's route
+with a 404 that says where it lives.
+
 | Endpoint | Returns |
 |---|---|
 | `GET /openapi.json` | the machine-readable OpenAPI 3.0 reference of the public read API — the snapshot ingestion endpoint is deliberately omitted (it stays an internal contract, kept in sync by the tests) |
@@ -155,7 +171,7 @@ returns the shell; the page then reports that the item was never observed.
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
 | `GET /api/best-value?order=&dir=` | craftable items ranked by `value_ratio` = unit price ÷ crafting cost; descending is best value (sells above cost), ascending is worst |
 | `GET /api/recently-removed?window=` | listings that vanished between the last two snapshots (default), or within the last `window` seconds |
-| `POST /api/snapshot` | append one snapshot — body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}`; the server computes and stores each absolute `expires_at` from the posted countdown |
+| `POST /api/snapshot` | append one snapshot — served on the write port only; body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}`; the server computes and stores each absolute `expires_at` from the posted countdown |
 
 The API is the stable surface of the website; the frontend is a consumer of it.
 

@@ -6,12 +6,19 @@ the DuckDB file: the ``fetch --store`` CLI posts each snapshot to
 ``POST /api/snapshot`` instead of touching the database itself, so exactly
 one component ever opens the file (read-write, per request)::
 
-    uv run python -m aoeo_market.web --db market.db --port 8000
-    uv run python -m aoeo_market.cli fetch --store http://127.0.0.1:8000
+    uv run python -m aoeo_market.web --db market.db --port 8000 --write-port 8001
+    uv run python -m aoeo_market.cli fetch --store http://127.0.0.1:8001
+
+The reads and the write answer on **two different ports**: the dashboard and
+the public ``/api/*`` reads are served on ``--port``, the single write
+endpoint ``POST /api/snapshot`` only on ``--write-port``.  Keeping the
+unauthenticated ingestion endpoint on its own port lets an operator publish
+the dashboard while the fetcher is the only client that can reach the write
+port (bind it to another interface with ``--write-host``, or firewall it).
 
 That split maps directly onto Kubernetes: the web app runs as a StatefulSet
 pod owning the database volume, and ``fetch --store <url>`` runs as a
-CronJob that only needs network access to the service.
+CronJob that only needs network access to the write port.
 
 Endpoints are documented in the machine-readable OpenAPI 3.0 reference
 served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.web.openapi`
@@ -19,7 +26,7 @@ from the routing metadata, so it cannot drift from the implementation).
 In short: probes at ``/healthz`` and ``/readyz``; dashboard reads under
 ``/api/*`` (overview, search, listings, item history, not-on-sale,
 best-sellers, best-value, recently-removed); the single write endpoint
-``POST /api/snapshot`` (unauthenticated — keep the server on a private
+``POST /api/snapshot`` (unauthenticated — keep the write port on a private
 network or protect it with a reverse proxy when it is reachable beyond
 localhost).
 """
@@ -55,6 +62,15 @@ _STATIC_TYPES = {
 }
 
 _JSON = "application/json; charset=utf-8"
+
+# The single write endpoint, served only by the write listener (--write-port).
+_WRITE_ENDPOINT = "/api/snapshot"
+
+
+def _error_body(message: str) -> bytes:
+    """The JSON body of an error response (handlers share the app's shape)."""
+    return json.dumps({"error": message}).encode()
+
 
 _LISTING_FIELDS = (
     "transaction_id",
@@ -175,7 +191,7 @@ class WebApp:
 
     def handle_post(self, path: str, body: bytes) -> tuple[int, str, bytes]:
         """Route one POST (the snapshot write API) and return the response."""
-        if path != "/api/snapshot":
+        if path != _WRITE_ENDPOINT:
             return self._error(404, f"no route for {path!r}")
         try:
             payload = json.loads(body or b"{}")
@@ -289,23 +305,19 @@ class WebApp:
         return 200, _JSON, json.dumps(payload).encode()
 
     def _error(self, status: int, message: str) -> tuple[int, str, bytes]:
-        return status, _JSON, json.dumps({"error": message}).encode()
+        return status, _JSON, _error_body(message)
 
 
 class _Handler(BaseHTTPRequestHandler):
+    """Shared response plumbing for the two listeners.
+
+    Each listener serves exactly one HTTP method: the dashboard/read listener
+    answers ``GET``, the write listener answers ``POST``.  A request for the
+    other method is a 404 that names the port its route lives on, so a
+    misconfigured client finds out immediately.
+    """
+
     app: WebApp
-
-    def do_GET(self) -> None:
-        parsed = urllib.parse.urlsplit(self.path)
-        status, ctype, body = self.app.handle(parsed.path, urllib.parse.parse_qs(parsed.query))
-        self._respond(status, ctype, body)
-
-    def do_POST(self) -> None:
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(length) if length else b""
-        parsed = urllib.parse.urlsplit(self.path)
-        status, ctype, resp = self.app.handle_post(parsed.path, body)
-        self._respond(status, ctype, resp)
 
     def _respond(self, status: int, ctype: str, body: bytes) -> None:
         self.send_response(status)
@@ -314,32 +326,94 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_body(self) -> bytes:
+        """Consume the request body, so the client reads the response."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        return self.rfile.read(length) if length else b""
+
     def log_message(self, fmt: str, *args: object) -> None:
         super().log_message(fmt, *args)
+
+
+class _ReadHandler(_Handler):
+    """The dashboard and the read API (GET, on ``--port``)."""
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        status, ctype, body = self.app.handle(parsed.path, urllib.parse.parse_qs(parsed.query))
+        self._respond(status, ctype, body)
+
+    def do_POST(self) -> None:
+        self._read_body()
+        message = f"this port serves the read API only; POST {_WRITE_ENDPOINT} is on the write port (--write-port)"
+        self._respond(404, _JSON, _error_body(message))
+
+
+class _WriteHandler(_Handler):
+    """The snapshot write API (POST, on ``--write-port``)."""
+
+    def do_GET(self) -> None:
+        self._respond(404, _JSON, _error_body(f"this port serves only POST {_WRITE_ENDPOINT}; read the dashboard on the --port listener"))
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        status, ctype, body = self.app.handle_post(parsed.path, self._read_body())
+        self._respond(status, ctype, body)
+
+
+def create_servers(app: WebApp, host: str, port: int, write_host: str, write_port: int) -> tuple[ThreadingHTTPServer, ThreadingHTTPServer]:
+    """Bind the read and write listeners over one ``WebApp`` and return ``(read, write)``.
+
+    Neither server is serving yet.  Port ``0`` binds a free port (used by
+    tests); both listeners share the app, so its database and write lock are
+    common to them.  One process serves one app, which the handler classes
+    carry as a class attribute.
+    """
+    _ReadHandler.app = app
+    _WriteHandler.app = app
+    read = ThreadingHTTPServer((host, port), _ReadHandler)
+    try:
+        write = ThreadingHTTPServer((write_host, write_port), _WriteHandler)
+    except OSError:
+        read.server_close()
+        raise
+    return read, write
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="aoeo_market.web",
-        description="Serve the market intelligence dashboard over the snapshot database.",
+        description="Serve the market intelligence dashboard and the snapshot write API.",
     )
     p.add_argument("--db", default="market.db", help="DuckDB snapshot database (default market.db)")
-    p.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
-    p.add_argument("--port", type=int, default=8000, help="port (default 8000)")
+    p.add_argument("--host", default="127.0.0.1", help="read API bind address (default 127.0.0.1)")
+    p.add_argument("--port", type=int, default=8000, help="read API port (default 8000)")
+    p.add_argument("--write-host", default=None, help="snapshot write API bind address (default: --host)")
+    p.add_argument("--write-port", type=int, default=8001, help="snapshot write API port (default 8001)")
     args = p.parse_args(argv)
+
+    write_host = args.write_host or args.host
+    if (write_host, args.write_port) == (args.host, args.port):
+        p.error("--write-port must differ from --port when both bind the same host")
 
     if not Path(args.db).exists():
         print(f"warning: {args.db} does not exist yet; run `aoeo_market.cli init-db --db {args.db}` (or POST a snapshot) to create it", file=sys.stderr)
 
-    _Handler.app = WebApp(args.db)
-    server = ThreadingHTTPServer((args.host, args.port), _Handler)
+    app = WebApp(args.db)
+    read_server, write_server = create_servers(app, args.host, args.port, write_host, args.write_port)
+
+    writing = threading.Thread(target=write_server.serve_forever, name="snapshot-write", daemon=True)
+    writing.start()
     print(f"Serving the Merchant Zeno dashboard on http://{args.host}:{args.port} (db: {args.db})")
+    print(f"Serving the snapshot write API on http://{write_host}:{args.write_port} (POST {_WRITE_ENDPOINT})")
     try:
-        server.serve_forever()
+        read_server.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
-        server.server_close()
+        write_server.shutdown()
+        write_server.server_close()
+        read_server.server_close()
     return 0
 
 

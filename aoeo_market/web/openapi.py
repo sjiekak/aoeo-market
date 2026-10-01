@@ -637,13 +637,15 @@ def _ingestion_path() -> dict:
 
     The public ``/openapi.json`` deliberately omits it: the website does not
     advertise how market data is ingested.  It stays in the generated spec
-    for operator documentation and for the sync test.
+    for operator documentation and for the sync test.  The server serves it
+    only on the write listener (``--write-port``), separate from the
+    dashboard.
     """
     return {
         "/api/snapshot": {
             "post": {
                 "summary": "Append one market snapshot",
-                "description": "The only write endpoint: the fetcher posts here, so the web server is the single owner of the database. Unauthenticated — keep the service cluster-internal.",
+                "description": "The only write endpoint: the fetcher posts here, so the web server is the single owner of the database. Served on its own port (--write-port) and unauthenticated — keep that port cluster-internal.",
                 "requestBody": {
                     "required": True,
                     "content": {"application/json": {"schema": _ref("SnapshotPayload")}},

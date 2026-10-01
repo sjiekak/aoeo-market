@@ -21,8 +21,8 @@ uv run python -m aoeo_market.cli replay A.pcapng B.pcapng     # diff two snapsho
 uv run python -m aoeo_market.cli probe   --game                    # live login probe
 uv run python -m aoeo_market.cli fetch                             # read the live market
 uv run python -m aoeo_market.cli fetch  --watch                    # stream LISTED/REMOVED events
-uv run python -m aoeo_market.cli fetch  --store http://127.0.0.1:8000 --quiet  # snapshot via the web API
-uv run python -m aoeo_market.web --db market.db                    # serve the dashboard
+uv run python -m aoeo_market.cli fetch  --store http://127.0.0.1:8001 --quiet  # snapshot via the web API
+uv run python -m aoeo_market.web --db market.db                    # dashboard :8000, snapshot write API :8001
 ```
 
 > The live commands detect your local IPv4 address and use it as the default;

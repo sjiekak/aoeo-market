@@ -10,9 +10,10 @@ uv run python -m aoeo_market.cli backfill            # fill expires_at on pre-ex
 
 The live commands detect your local IPv4 address as the default; pass
 ``--local-ip <ip>`` to override it.  ``fetch --store`` persists every fetched
-snapshot: give it the web app's URL (``--store http://host:8000``) to POST
-the snapshot to its API — the web server is the single owner of the database
-— or a local file path (``--store market.db``) to write a DuckDB file
+snapshot: give it the web app's write port URL
+(``--store http://host:8001``, ``--write-port`` on the server) to POST the
+snapshot to its API — the web server is the single owner of the database —
+or a local file path (``--store market.db``) to write a DuckDB file
 directly.  Run it from cron every hour to build the history.
 """
 
@@ -332,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
         nargs="?",
         const="market.db",
         metavar="URL_OR_PATH",
-        help="persist every fetched snapshot: POST to a web URL (http://host:8000) or write a local DuckDB file (default market.db)",
+        help="persist every fetched snapshot: POST to a web URL (the server's --write-port, e.g. http://host:8001) or write a local DuckDB file (default market.db)",
     )
     f.add_argument(
         "--quiet",

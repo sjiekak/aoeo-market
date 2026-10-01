@@ -54,12 +54,14 @@ COPY --chown=aoeo:aoeo LICENSE README.md THIRD_PARTY_NOTICES.md ./
 USER 10001:10001
 
 VOLUME ["/data"]
-EXPOSE 8000
+# 8000 is the public dashboard/read API; 8001 is the snapshot write API, which
+# only the fetcher needs to reach (publish 8000 only).
+EXPOSE 8000 8001
 
 # Liveness only (`/healthz` answers 200 while the process is up); readiness is
 # `/readyz`, which stays 503 until the database exists and opens.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
 
-# Serve the dashboard.
-CMD ["python", "-m", "aoeo_market.web", "--db", "/data/market.db", "--host", "0.0.0.0", "--port", "8000"]
+# Serve the dashboard (read API on 8000, snapshot write API on 8001).
+CMD ["python", "-m", "aoeo_market.web", "--db", "/data/market.db", "--host", "0.0.0.0", "--port", "8000", "--write-port", "8001"]
