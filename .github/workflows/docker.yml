@@ -1,0 +1,40 @@
+name: Docker
+
+# Build the image on every pull request so a broken Dockerfile or a stale
+# uv.lock fails before the merge.  Nothing is pushed here: images are published
+# only by the release workflow (.github/workflows/docker-release.yml).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # `load: true` puts the image in the local daemon so the smoke test below
+      # can run it.  The GitHub Actions cache keeps a warm layer cache between
+      # runs, so a pull request that only touches the source rebuilds in
+      # seconds.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: aoeo-market:pr
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Fail loudly if the image cannot even import the package or create a
+      # database, rather than shipping that to a release.
+      - name: Smoke-test the image
+        run: |
+          docker run --rm aoeo-market:pr python -c "import aoeo_market.web, aoeo_market.cli"
+          docker run --rm aoeo-market:pr python -m aoeo_market.cli init-db --db /tmp/market.db
