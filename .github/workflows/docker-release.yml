@@ -1,0 +1,61 @@
+name: Docker release
+
+# Publishing a GitHub release publishes the image: the release tag becomes the
+# image tag, so `v1.1.1` -> `ghcr.io/sjiekak/aoeo-market:v1.1.1`.  A release
+# that is not marked as a pre-release also moves `latest`.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  # GHCR paths must be lowercase; `github.repository` already is here, and using
+  # it keeps a fork publishing to its own namespace instead of this one.
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The workflow's own token is enough: it has `packages: write` above and
+      # no extra repository secret is needed.
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The release tag is the version tag; `latest` only follows a stable
+      # (non-prerelease) release.  Both are `type=raw` on purpose: they depend
+      # only on the release payload, whereas `type=ref,event=tag` implicitly
+      # tags `latest` too, pre-release or not.  This also adds the standard OCI
+      # labels (source, revision, version) to the image.
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ github.event.release.tag_name }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

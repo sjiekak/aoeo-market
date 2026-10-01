@@ -1,0 +1,47 @@
+# Build context for the image: `pyproject.toml` + `uv.lock` (dependencies) and
+# the `aoeo_market` package (code + data).  Everything else is noise that would
+# only slow the build down or leak local state into a layer.
+
+# Version control / CI
+.git
+.github
+
+# Local Python environment and caches (the image builds its own in the builder
+# stage; the host one is platform-specific and must never be copied)
+.venv
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+
+# Secrets and local-only overrides
+.creds.env
+*.env
+
+# Development-only trees (not imported by the package at runtime)
+tests
+docs
+scripts
+deploy
+tmp
+
+# Local build/packaging artifacts
+dist
+build
+*.egg-info
+requirements.txt
+
+# Local data: captures, snapshot databases, logs
+market.db
+market.db-*
+*.pcapng
+*.pcapng.gz
+*.log
+
+# Host tooling that the image does not need
+# (LICENSE, THIRD_PARTY_NOTICES.md and README.md stay in the context: they ship
+# inside the image as the project's attribution.)
+.gitignore
+Makefile
+biome.json
+CONTRIBUTING.md
