@@ -24,6 +24,21 @@ def app_for(tmp_path) -> WebApp:
     return WebApp(str(db))
 
 
+def http(url: str, *, data: bytes | None = None, method: str | None = None) -> tuple[int, bytes]:
+    """One HTTP request against a loopback test listener -> ``(status, body)``."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
 def resolve_schema(schema: dict, schemas: dict) -> tuple[dict, list[str]]:
     """Flatten an ``allOf``-composed schema into its effective properties.
 
@@ -499,6 +514,62 @@ def test_post_snapshot_validation(tmp_path):
     assert app.handle_post("/api/snapshot", json.dumps({"listings": [bad]}).encode())[0] == 400
     assert app.handle_post("/api/snapshot", json.dumps({"listings": [mk(1).to_dict()], "captured_at": "x"}).encode())[0] == 400
     assert app.handle_post("/api/nope", b"{}")[0] == 404
+
+
+def test_read_and_write_ports_are_separate(tmp_path):
+    """The dashboard port is read-only; POST /api/snapshot answers on --write-port."""
+    import json
+    import threading
+
+    from aoeo_market.web import server as web_server
+
+    app = WebApp(str(tmp_path / "split.db"))
+    read, write = web_server.create_servers(app, "127.0.0.1", 0, "127.0.0.1", 0)
+    read_port = read.server_address[1]
+    write_port = write.server_address[1]
+    assert read_port != write_port
+    threads = [threading.Thread(target=server.serve_forever, daemon=True) for server in (read, write)]
+    for thread in threads:
+        thread.start()
+    try:
+        # the dashboard port answers reads...
+        assert http(f"http://127.0.0.1:{read_port}/healthz") == (200, b'{"status": "ok"}')
+        # ...but not the write endpoint
+        status, body = http(f"http://127.0.0.1:{read_port}/api/snapshot", data=b'{"listings": []}', method="POST")
+        assert status == 404
+        assert b"write port" in body
+
+        # the write endpoint answers on the write port...
+        payload = json.dumps({"listings": [mk(1, item_id="Sword_U_III", price=120).to_dict()]}).encode()
+        status, body = http(f"http://127.0.0.1:{write_port}/api/snapshot", data=payload, method="POST")
+        assert status == 201
+        assert json.loads(body) == {"snapshot_id": 1, "listings": 1}
+        # ...which serves no reads at all
+        status, body = http(f"http://127.0.0.1:{write_port}/api/overview")
+        assert status == 404
+        assert b"only POST" in body
+
+        # both listeners share the one database the process owns
+        status, body = http(f"http://127.0.0.1:{read_port}/api/overview")
+        assert status == 200
+        assert json.loads(body)["snapshot_count"] == 1
+    finally:
+        for server in (read, write):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join()
+
+
+def test_cli_refuses_the_same_read_and_write_port(tmp_path):
+    import pytest
+
+    from aoeo_market.web import server as web_server
+
+    argv = ["--db", str(tmp_path / "m.db"), "--host", "127.0.0.1", "--port", "8000", "--write-port", "8000"]
+    with pytest.raises(SystemExit) as excinfo:
+        web_server.main(argv)
+    assert excinfo.value.code == 2
 
 
 def test_recently_removed_endpoint(tmp_path):
