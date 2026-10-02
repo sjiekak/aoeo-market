@@ -22,10 +22,18 @@ Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
 // the dashboard working (without zoom) if that CDN file is unreachable.
 if (window.ChartZoom) Chart.register(ChartZoom);
 
+// The snapshot data only changes when the server ingests a new snapshot, so a
+// response is immutable for the life of the page: responses are memoized per
+// URL and a repeated request (re-opening a tab, asking the same search twice,
+// re-sorting a view whose fetch is already in flight) is served from memory.
+const apiCache = new Map();
+
 async function api(path) {
+	if (apiCache.has(path)) return apiCache.get(path);
 	const r = await fetch(path);
 	const body = await r.json().catch(() => ({}));
 	if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+	apiCache.set(path, body);
 	return body;
 }
 
@@ -193,7 +201,7 @@ const TAB_LOADERS = {
 	overview: loadOverview,
 	listings: loadListings,
 	"best-sellers": loadBestSellersTab,
-	"best-value": loadBestValue,
+	"best-value": loadBestValueTab,
 	"not-on-sale": loadNotOnSale,
 	removed: loadRemoved,
 };
@@ -465,7 +473,36 @@ function cmpValues(a, b) {
 	if (a == null) return 1;
 	if (b == null) return -1;
 	if (typeof a === "number" && typeof b === "number") return a - b;
-	return String(a).localeCompare(String(b));
+	// Code-point order, matching the API's ORDER BY: localeCompare would rank
+	// "Halloween" before "HDW" where the server ranks it after, so a header
+	// click would disagree with the same ordering from the API.
+	const sa = String(a);
+	const sb = String(b);
+	if (sa === sb) return 0;
+	return sa < sb ? -1 : 1;
+}
+
+// Sort a copy of *rows* by the accessor for *order*, leaving the cache alone.
+// The accessor runs once per row instead of once per comparison, and the
+// comparator is stable, so ties keep the order the API returned — the same
+// result the server would produce for the same ordering.
+function sortedRows(rows, order, dir, accessors) {
+	if (!order) return rows.slice();
+	const key = accessors[order];
+	const sign = dir === "desc" ? -1 : 1;
+	return rows
+		.map((row) => [key(row), row])
+		.sort((a, b) => cmpValues(a[0], b[0]) * sign)
+		.map((pair) => pair[1]);
+}
+
+// Collapse a burst of events — typing in a filter box — into one render.
+function debounce(fn, ms) {
+	let timer;
+	return (...args) => {
+		clearTimeout(timer);
+		timer = setTimeout(() => fn(...args), ms);
+	};
 }
 
 // The classic default view: cheapest per unit last (price, max-first).
@@ -489,20 +526,18 @@ function renderListings() {
 	const { order, dir } = listingSort;
 	const q = $("#ls-q").value.trim().toLowerCase();
 	const type = $("#ls-type").value;
-	const rows = listingsCache
-		.filter(
+	const rows = sortedRows(
+		listingsCache.filter(
 			(l) =>
 				(!type || l.item_type === type) &&
 				(!q ||
 					l.item_id.toLowerCase().includes(q) ||
 					(l.name && l.name.toLowerCase().includes(q))),
-		)
-		.sort((a, b) =>
-			order
-				? cmpValues(LISTING_SORTS[order](a), LISTING_SORTS[order](b)) *
-					(dir === "desc" ? -1 : 1)
-				: 0,
-		);
+		),
+		order,
+		dir,
+		LISTING_SORTS,
+	);
 	$("#ls-count").textContent =
 		`${rows.length} / ${listingsCache.length} listings`;
 	const now = Date.now();
@@ -520,13 +555,37 @@ function renderListings() {
 		.join("");
 }
 
-$("#ls-q").addEventListener("input", renderListings);
+// Typing filters the cached rows, so it is debounced: without it every
+// keystroke rebuilt the whole table of ~1,800 rows.
+$("#ls-q").addEventListener("input", debounce(renderListings, 120));
 $("#ls-type").addEventListener("change", renderListings);
 
 /* --- best sellers -------------------------------------------------------- */
 
-function renderBestSellersChart(rows) {
-	const top = rows.slice(0, 10).reverse(); // fastest at the top
+// One accessor per sortable column, mirroring the ordering the API applies
+// (rarity by rank, so Legendary sorts above Epic rather than alphabetically).
+// "sales" is the row's ``sales`` field, exactly as the API sorts it — note the
+// cell shows ``timed_sales``, a pre-existing mismatch left as it was.
+const BEST_SELLER_SORTS = {
+	item: (r) => r.item_id,
+	type: (r) => r.item_type,
+	level: (r) => r.item_level,
+	rarity: (r) => r.rarity_rank,
+	median_time: (r) => r.median_time,
+	min_time: (r) => r.min_time,
+	max_time: (r) => r.max_time,
+	sales: (r) => r.sales,
+	expired: (r) => r.expired,
+	active_count: (r) => r.active_count,
+	current_median_unit_price: (r) => r.current_median_unit_price,
+	last_seen: (r) => r.last_seen,
+};
+
+let bestSellerCache = [];
+
+// The chart always shows the ten fastest, whatever the table is sorted by.
+function renderBestSellersChart() {
+	const top = sortedRows(bestSellerCache, "median_time", "asc", BEST_SELLER_SORTS).slice(0, 10).reverse(); // fastest at the top
 	makeChart("#chart-best-sellers", {
 		type: "bar",
 		data: {
@@ -555,7 +614,13 @@ function renderBestSellersChart(rows) {
 	});
 }
 
-function renderBestSellers(rows) {
+function renderBestSellers() {
+	const rows = sortedRows(
+		bestSellerCache,
+		bestSort.order,
+		bestSort.dir,
+		BEST_SELLER_SORTS,
+	);
 	$("#best-body").innerHTML =
 		rows
 			.map(
@@ -577,29 +642,18 @@ function renderBestSellers(rows) {
 		'<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as more data is collected</td></tr>';
 }
 
-async function loadBestSellers() {
-	const rows = await api(
-		"/api/best-sellers" + orderQuery(bestSort.order, bestSort.dir),
-	);
-	renderBestSellers(rows);
-}
-
-// The chart always shows the ten fastest (median_time, asc); while the table
-// still sits at that default sort, one request feeds both.
+// One request feeds both the chart and the table, and a column click re-sorts
+// the cached rows — the API used to be re-queried for every header click.
 async function loadBestSellersTab() {
-	const rows = await api("/api/best-sellers?order=median_time&dir=asc");
-	renderBestSellersChart(rows);
-	if (bestSort.order === "median_time" && bestSort.dir === "asc") {
-		renderBestSellers(rows);
-	} else {
-		await loadBestSellers();
-	}
+	bestSellerCache = await api("/api/best-sellers");
+	renderBestSellersChart();
+	renderBestSellers();
 }
 
 const bestSort = wireColumnSort("best-sellers", {
 	order: "median_time",
 	dir: "asc",
-	apply: loadBestSellers,
+	apply: renderBestSellers,
 });
 
 /* --- best value (crafting) ----------------------------------------------- */
@@ -609,9 +663,25 @@ const bestSort = wireColumnSort("best-sellers", {
 const fmtRatio = (r) =>
 	r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×";
 
-async function loadBestValue() {
-	const rows = await api(
-		"/api/best-value" + orderQuery(valueSort.order, valueSort.dir),
+// One accessor per sortable column, mirroring the ordering the API applies.
+const VALUE_SORTS = {
+	item: (r) => r.item_id,
+	type: (r) => r.type,
+	rarity: (r) => r.rarity_rank,
+	craft_cost: (r) => r.craft_cost,
+	price: (r) => r.price,
+	value_ratio: (r) => r.value_ratio,
+	listed_now: (r) => r.listed_now,
+};
+
+let valueCache = [];
+
+function renderBestValue() {
+	const rows = sortedRows(
+		valueCache,
+		valueSort.order,
+		valueSort.dir,
+		VALUE_SORTS,
 	);
 	$("#value-body").innerHTML =
 		rows
@@ -630,10 +700,17 @@ async function loadBestValue() {
 		'<tr><td colspan="7" class="muted">no craftable item has been observed yet</td></tr>';
 }
 
+// One request feeds the whole tab; best/worst and every column header re-sort
+// the cached rows instead of re-querying the API.
+async function loadBestValueTab() {
+	valueCache = await api("/api/best-value");
+	renderBestValue();
+}
+
 const valueSort = wireColumnSort("best-value", {
 	order: "value_ratio",
 	dir: "desc",
-	apply: loadBestValue,
+	apply: renderBestValue,
 });
 
 // Best/worst is only the direction of the ratio ordering; a column header
@@ -642,7 +719,7 @@ $("#value-view").addEventListener("change", () => {
 	valueSort.order = "value_ratio";
 	valueSort.dir = $("#value-view").value;
 	valueSort.sync();
-	loadBestValue().catch((e) => console.error(e));
+	renderBestValue();
 });
 
 /* --- not on sale --------------------------------------------------------- */

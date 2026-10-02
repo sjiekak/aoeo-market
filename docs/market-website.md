@@ -288,3 +288,24 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - Caching is per `WebApp` instance, so it never leaks between servers or tests,
   and it is transparent: calling a view without a cache computes it as before.
 
+The dashboard fetches each view once and then does its own sorting, rather
+than asking the API to re-sort on every column click:
+
+- Every `/api/*` response is memoized per URL for the life of the page. The
+  snapshot only changes when the server ingests one, so a repeated request
+  (re-opening a tab, the same search twice) is served from memory.
+- The listings, best-sellers and best-value tabs cache the single response
+  they fetch. A column header click re-sorts that cached array with the same
+  ordering the API would apply (`rarity` by rank, code-point order for the id
+  columns, nulls last in ascending order), so it costs no round trip — best
+  sellers used to issue a fresh request for every header click and could issue
+  two when the tab opened.
+- The best-sellers chart is derived from the cached rows too, so the table sort
+  and the "ten fastest" chart never disagree or cost a second request.
+- The listings filter box is debounced by 120 ms: without it each keystroke
+  rebuilt the whole table of ~1,800 rows.
+- The sort key is computed once per row instead of once per comparison.
+
+The API still accepts `order`/`dir`, so other consumers are unaffected; the
+dashboard simply does not need them.
+
