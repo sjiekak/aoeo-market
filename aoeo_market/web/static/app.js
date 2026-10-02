@@ -449,7 +449,8 @@ let listingsCache = [];
 
 // One accessor per sortable column. Strings compare lexically and numbers
 // numerically; null/undefined sort last in "min" order (first in "max"),
-// matching the API's null placement.
+// matching the API's null placement. Seller is deliberately absent: the API
+// redacts the id, so there is nothing to show or sort by.
 const LISTING_SORTS = {
 	item: (l) => l.item_id,
 	type: (l) => l.item_type,
@@ -457,7 +458,6 @@ const LISTING_SORTS = {
 	count: (l) => l.item_count,
 	price: (l) => l.unit_price,
 	expiry: (l) => l.expires_at,
-	seller: (l) => String(l.seller_empire_id),
 };
 
 function cmpValues(a, b) {
@@ -515,7 +515,6 @@ function renderListings() {
         <td class="num">${l.item_count}</td>
         <td class="num">${fmtPrice(l.unit_price)}${l.item_count > 1 ? ` <span class="muted">(×${l.item_count})</span>` : ""}</td>
         <td class="num" title="${esc(l.expires_at ? fmtInstant(l.expires_at) : "no absolute expiry stored")}">${fmtExpiry(l.expires_at, now)}</td>
-        <td>${esc(String(l.seller_empire_id))}</td>
       </tr>`,
 		)
 		.join("");
@@ -697,11 +696,10 @@ async function loadRemoved() {
         <td class="num">${fmtPrice(r.item_price)}</td>
         <td><span class="badge ${r.reason === "EXPIRED" ? "expired" : "removed"}">${r.reason}</span></td>
         <td class="num">${fmtTime(r.vanished_at)}</td>
-        <td>${esc(String(r.seller_empire_id))}</td>
       </tr>`,
 			)
 			.join("") ||
-		'<tr><td colspan="7" class="muted">nothing vanished in this frame</td></tr>';
+		'<tr><td colspan="6" class="muted">nothing vanished in this frame</td></tr>';
 }
 
 $("#removed-window").addEventListener("change", loadRemoved);
@@ -902,11 +900,10 @@ async function loadItem(itemId) {
         <td class="num">${fmtPrice(c.item_price)}</td>
         <td class="num">${c.item_count}</td>
         <td class="num" title="${esc(c.expires_at ? fmtInstant(c.expires_at) : "no absolute expiry stored")}">${fmtExpiry(c.expires_at, now)}</td>
-        <td>${esc(String(c.seller_empire_id))}</td>
       </tr>`,
 			)
 			.join("") ||
-		'<tr><td colspan="5" class="muted">not currently listed</td></tr>';
+		'<tr><td colspan="4" class="muted">not currently listed</td></tr>';
 
 	$("#item-previous").innerHTML =
 		(it.previous || [])
@@ -918,11 +915,10 @@ async function loadItem(itemId) {
         <td>${fmtTime(p.first_seen)}</td>
         <td class="num">${fmtTime(p.vanished_at)}</td>
         <td><span class="badge ${p.reason === "EXPIRED" ? "expired" : "removed"}">${p.reason}</span></td>
-        <td>${esc(String(p.seller_empire_id))}</td>
       </tr>`,
 			)
 			.join("") ||
-		'<tr><td colspan="7" class="muted">no previous listings recorded</td></tr>';
+		'<tr><td colspan="6" class="muted">no previous listings recorded</td></tr>';
 
 	renderRecipe(it.recipe);
 	renderDismantle(it.dismantle);
