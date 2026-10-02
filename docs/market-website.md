@@ -246,10 +246,10 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   always `…Z`) — the instant `captured_at + seconds_till_expiry` for the
   snapshot that observed the listing, so a listing that vanished can still
   say when it expired. It is stored as a plain UTC `TIMESTAMP` (no timezone
-  attached); an upgraded database gets it for pre-existing snapshots by running
-  `python -m aoeo_market.cli backfill --db market.db` once. The dashboard
-  renders every instant, this one included, in the browser's local timezone,
-  day first and on a 24-hour clock (`en-GB`).
+  attached); an upgraded database gets it, and the other derived data below,
+  by running `python -m aoeo_market.cli backfill --db market.db` once. The
+  dashboard renders every instant, this one included, in the browser's local
+  timezone, day first and on a 24-hour clock (`en-GB`).
 - With one snapshot only, the "not on sale" and "recently removed" views are
   empty and the movers table says so — everything fills in from the second
   snapshot onwards.
@@ -270,3 +270,28 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job and the web server, move `market.db` (and its
   `market.db.wal` sidecar, if present) aside, and run `fetch --store` again.
+
+## Performance
+
+Two pieces of derived data keep the expensive read views from re-scanning the
+whole listing history, which grows without bound:
+
+- **`item_key`** is `lower(item_id)` stored alongside each listing (and indexed).
+  The wire id keeps the server's spelling while the catalog and the recipes are
+  keyed in lowercase, so before this column the best-value view had to apply
+  `lower(item_id)` to every row — a full scan no index can serve. Filtering the
+  same items by `item_key` bounds the scan to the craftable items and their
+  ingredients (~50k of 235k rows on the reference database).
+- **`transaction_summary`** holds one row per listing transaction — its first
+  and last snapshot, latest unit price and countdown, and item — so the
+  best-sellers view reads ~10k rows instead of every listing of every snapshot.
+  `record_snapshot` refreshes it for the transactions in the new snapshot, in
+  the same transaction, so a write can never leave it stale.
+
+`meta.transaction_summary_snapshot` records through which snapshot the summary
+is complete. A database upgraded in place has no summary, so the view detects
+the absent marker and falls back to aggregating the same rows from the history —
+correct, just slower — until `aoeo_market.cli backfill` rebuilds it. The same
+command fills `item_key`; both steps are idempotent, and `init-db` only adds the
+schema.
+

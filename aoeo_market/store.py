@@ -16,8 +16,12 @@ Schema::
 
     snapshots(id BIGINT PK, captured_at DOUBLE)        -- one row per fetch
     listings(snapshot_id, transaction_id, ...,         -- active listings per snapshot
+             item_key VARCHAR,                         -- lower(item_id): the lookup key
              seconds_till_expiry BIGINT,               -- server countdown at capture
              expires_at TIMESTAMP)                     -- absolute expiry (UTC)
+    transaction_summary(transaction_id PK, ...,        -- one row per listing ever seen,
+             first_snapshot_id, last_snapshot_id, ...) -- maintained by the writer
+    meta(key VARCHAR PK, value VARCHAR)                -- small bookkeeping values
 
 ``seconds_till_expiry`` is what the wire record carries — a countdown relative
 to the moment of capture — so on its own it cannot say *when* a listing
@@ -26,8 +30,16 @@ instant computed at capture as ``captured_at + seconds_till_expiry``.  It is a
 plain ``TIMESTAMP`` — no timezone is stored — whose wall clock is always UTC;
 every read projects it as an ISO-8601 UTC string, so a snapshot preserves the
 expiry regardless of the host's local timezone.  Snapshots recorded before the
-column existed are filled by the one-shot
-``aoeo_market.cli backfill`` command.
+column existed are filled by the one-shot ``aoeo_market.cli backfill`` command.
+
+``item_key`` is the lowercased item id: the wire keeps the server's spelling
+while the catalog and every lookup are lowercase, and a plain column can be
+indexed where ``lower(item_id)`` in a predicate cannot.  ``record_snapshot``
+stores it with each row; the same ``backfill`` command fills it for rows that
+predate it.  ``transaction_summary`` is the per-transaction aggregate the
+best-sellers view reads, refreshed inside every snapshot write; the ``backfill``
+command also rebuilds it, and ``meta`` records through which snapshot it is
+known complete (see :func:`summary_snapshot_id`).
 
 All other times are Unix timestamps (UTC seconds).
 """
@@ -48,6 +60,8 @@ from .catalog import fields as catalog_fields
 from .catalog import search as catalog_search
 from .market import Listing
 
+_ITEM_KEY_INDEX = "idx_listings_item_key"
+
 _SCHEMA_STATEMENTS = (
     "CREATE SEQUENCE IF NOT EXISTS snapshots_id_seq",
     """
@@ -63,6 +77,7 @@ _SCHEMA_STATEMENTS = (
         seller_empire_id BIGINT NOT NULL,
         buyer_character_id BIGINT NOT NULL,
         item_id VARCHAR NOT NULL,
+        item_key VARCHAR,
         item_type VARCHAR NOT NULL,
         item_level BIGINT NOT NULL,
         item_count BIGINT NOT NULL,
@@ -77,9 +92,37 @@ _SCHEMA_STATEMENTS = (
     # in place: the column is added nullable here, and the one-shot
     # ``aoeo_market.cli backfill`` command fills it for the existing rows.
     "ALTER TABLE listings ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
+    # ``item_key`` is ``lower(item_id)``: the wire id keeps the server's
+    # spelling while the catalog and every lookup are lowercase.  A plain column
+    # can be indexed and compared directly, whereas ``lower(item_id)`` in a
+    # predicate forces a scan of the whole table.  It is nullable for rows
+    # stored before it existed; ``cli backfill`` fills those.
+    "ALTER TABLE listings ADD COLUMN IF NOT EXISTS item_key VARCHAR",
     "CREATE INDEX IF NOT EXISTS idx_listings_item_price ON listings(item_id, item_price)",
     "CREATE INDEX IF NOT EXISTS idx_listings_snapshot ON listings(snapshot_id)",
     "CREATE INDEX IF NOT EXISTS idx_listings_item_type ON listings(item_type)",
+    f"CREATE INDEX IF NOT EXISTS {_ITEM_KEY_INDEX} ON listings(item_key)",
+    # The best-sellers view needs one row per listing transaction, which has to
+    # be aggregated from every snapshot; the writer keeps that aggregate here so
+    # a read is a scan of ~10k rows instead of the whole listing history.  The
+    # primary key doubles as the index on the grouping key the view orders by.
+    """
+    CREATE TABLE IF NOT EXISTS transaction_summary (
+        transaction_id BIGINT PRIMARY KEY,
+        item_id VARCHAR NOT NULL,
+        item_key VARCHAR NOT NULL,
+        item_type VARCHAR NOT NULL,
+        item_level BIGINT NOT NULL,
+        first_snapshot_id BIGINT NOT NULL,
+        last_snapshot_id BIGINT NOT NULL,
+        unit_price DOUBLE NOT NULL,
+        seconds_till_expiry BIGINT NOT NULL
+    )
+    """,
+    # Small key/value table recording through which snapshot the aggregate above
+    # is known complete, so a database migrated in place keeps reading the slow
+    # (correct) path until ``cli backfill`` rebuilds it.
+    "CREATE TABLE IF NOT EXISTS meta (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL)",
 )
 
 # Backfill of the absolute expiry for listings stored before the column existed:
@@ -92,6 +135,37 @@ _BACKFILL_EXPIRES_AT = """
     FROM snapshots AS s
     WHERE s.id = listings.snapshot_id AND listings.expires_at IS NULL
 """
+
+# ``item_key`` is derived, so a database upgraded in place gets it by running
+# this once (``cli backfill``); new rows carry it from ``record_snapshot``.
+_BACKFILL_ITEM_KEYS = "UPDATE listings SET item_key = lower(item_id) WHERE item_key IS NULL"
+
+# The per-transaction aggregate behind the best-sellers view, in two forms: a
+# full rebuild for the backfill command, and an upsert that refreshes just the
+# transactions seen in one new snapshot (the only ones whose last-seen row can
+# have changed).  Both take the first row of a transaction in snapshot order
+# (``arg_min``) for the item fields, matching how the view reads them live.
+_SUMMARY_COLUMNS = """
+        transaction_id,
+        arg_min(item_id, snapshot_id) AS item_id,
+        arg_min(lower(item_id), snapshot_id) AS item_key,
+        arg_min(item_type, snapshot_id) AS item_type,
+        arg_min(item_level, snapshot_id) AS item_level,
+        min(snapshot_id) AS first_snapshot_id,
+        max(snapshot_id) AS last_snapshot_id,
+        arg_max(item_price / greatest(item_count, 1), snapshot_id) AS unit_price,
+        arg_max(seconds_till_expiry, snapshot_id) AS seconds_till_expiry
+"""
+_REBUILD_TRANSACTION_SUMMARY = f"INSERT INTO transaction_summary SELECT {_SUMMARY_COLUMNS} FROM listings GROUP BY transaction_id"
+_UPSERT_TRANSACTION_SUMMARY = f"""
+    INSERT OR REPLACE INTO transaction_summary
+    SELECT {_SUMMARY_COLUMNS}
+    FROM listings
+    WHERE transaction_id IN (SELECT transaction_id FROM listings WHERE snapshot_id = ?)
+    GROUP BY transaction_id
+"""
+# Through which snapshot the aggregate is complete; see ``_maintain_summary``.
+_SUMMARY_META_KEY = "transaction_summary_snapshot"
 
 # ``expires_at`` is a naive UTC TIMESTAMP, so no timezone is stored with it.
 # The session default is still pinned to UTC defensively, so any timezone-aware
@@ -154,6 +228,92 @@ def backfill_expires_at(conn: duckdb.DuckDBPyConnection) -> int:
         conn.execute("ROLLBACK")
         raise
     return pending
+
+
+def backfill_item_keys(conn: duckdb.DuckDBPyConnection) -> int:
+    """Fill ``item_key`` for listings stored before the column existed.
+
+    Idempotent and cheap when there is nothing to fill (the ``LIMIT 1`` probe
+    finds no NULL).  Returns the number of rows filled.
+
+    The update rewrites every row, so the index is dropped for the duration:
+    maintaining it row by row costs ~40× the rebuild (seconds instead of
+    milliseconds on a full history).  The drop must happen *outside* the
+    transaction — dropped inside one, DuckDB still maintains it.  A crash
+    between the drop and the rebuild is harmless: ``open_store`` recreates any
+    index the schema declares.
+    """
+    if conn.execute("SELECT 1 FROM listings WHERE item_key IS NULL LIMIT 1").fetchone() is None:
+        return 0
+    pending = int(conn.execute("SELECT COUNT(*) FROM listings WHERE item_key IS NULL").fetchone()[0])
+    conn.execute(f"DROP INDEX IF EXISTS {_ITEM_KEY_INDEX}")
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            conn.execute(_BACKFILL_ITEM_KEYS)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.execute(f"CREATE INDEX IF NOT EXISTS {_ITEM_KEY_INDEX} ON listings(item_key)")
+    return pending
+
+
+def summary_snapshot_id(conn: duckdb.DuckDBPyConnection) -> int | None:
+    """The snapshot through which ``transaction_summary`` is complete, if known.
+
+    ``None`` (a database that has just been upgraded, or a freshly cleared
+    table) means the aggregate cannot be trusted yet and callers must compute
+    the slow way until ``cli backfill`` rebuilds it.
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", [_SUMMARY_META_KEY]).fetchone()
+    return int(row[0]) if row else None
+
+
+def _set_summary_snapshot(conn: duckdb.DuckDBPyConnection, snapshot_id: int) -> None:
+    conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", [_SUMMARY_META_KEY, str(snapshot_id)])
+
+
+def _maintain_summary(conn: duckdb.DuckDBPyConnection, snapshot_id: int) -> None:
+    """Refresh the aggregate for one snapshot's transactions, inside its write.
+
+    The aggregate stays usable only while it covers every snapshot: the upsert
+    below recomputes the transactions *present* in the new snapshot, but a
+    database upgraded in place is missing the transactions that vanished
+    earlier.  The marker is therefore advanced only when it already covered the
+    previous snapshot (or this is the very first snapshot).
+    """
+    previous = conn.execute("SELECT id FROM snapshots WHERE id < ? ORDER BY id DESC LIMIT 1", [snapshot_id]).fetchone()
+    marker = summary_snapshot_id(conn)
+    conn.execute(_UPSERT_TRANSACTION_SUMMARY, [snapshot_id])
+    if previous is None:
+        _set_summary_snapshot(conn, snapshot_id)  # first snapshot ever: now complete
+    elif marker is not None and marker == previous[0]:
+        _set_summary_snapshot(conn, snapshot_id)
+
+
+def backfill_transaction_summary(conn: duckdb.DuckDBPyConnection) -> int:
+    """Rebuild ``transaction_summary`` from every stored listing.
+
+    Run once as part of ``aoeo_market.cli backfill`` after a database is
+    upgraded: once the rebuild finishes the marker points at the latest
+    snapshot, and the view reads the aggregate from then on.  Returns the
+    number of transactions summarized.
+    """
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        conn.execute("DELETE FROM transaction_summary")
+        conn.execute(_REBUILD_TRANSACTION_SUMMARY)
+        total = int(conn.execute("SELECT COUNT(*) FROM transaction_summary").fetchone()[0])
+        latest = conn.execute("SELECT id FROM snapshots ORDER BY id DESC LIMIT 1").fetchone()
+        if latest is not None:
+            _set_summary_snapshot(conn, latest[0])
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return total
 
 
 def open_store(path: str | os.PathLike, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
@@ -225,6 +385,9 @@ def record_snapshot(
     Each listing stores its absolute UTC expiry, computed here as
     ``captured_at + seconds_till_expiry`` so the snapshot preserves *when* the
     listing expires rather than only the countdown the wire happened to carry.
+    Each row also stores ``item_key`` (lowercased id) and the per-transaction
+    aggregate is refreshed in the same transaction, so the best-sellers view
+    never has to scan the history.
     """
     if captured_at is None:
         captured_at = time.time()
@@ -234,6 +397,7 @@ def record_snapshot(
             l.seller_empire_id,
             l.buyer_character_id,
             l.item_id,
+            l.item_id.lower(),
             l.item_type,
             l.item_level,
             l.item_count,
@@ -252,9 +416,15 @@ def record_snapshot(
         snapshot_id = conn.execute("INSERT INTO snapshots(captured_at) VALUES (?) RETURNING id", [captured_at]).fetchone()[0]
         if rows:
             conn.executemany(
-                "INSERT INTO listings VALUES (?,?,?,?,?,?,?,?,?,?,?, to_timestamp(?) AT TIME ZONE 'UTC')",
+                """
+                INSERT INTO listings
+                    (snapshot_id, transaction_id, seller_empire_id, buyer_character_id, item_id, item_key,
+                     item_type, item_level, item_count, item_price, item_seed, seconds_till_expiry, expires_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?, to_timestamp(?) AT TIME ZONE 'UTC')
+                """,
                 [(snapshot_id, *row) for row in rows],
             )
+        _maintain_summary(conn, snapshot_id)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -537,7 +707,7 @@ def _material_prices(conn: duckdb.DuckDBPyConnection, item_ids: Sequence[str]) -
     active: dict[str, list[float]] = {}
     for r in _rows(
         conn,
-        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE lower(item_id) IN ({placeholders})",
+        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE item_key IN ({placeholders})",
         ids,
     ):
         unit = r["item_price"] / max(r["item_count"], 1)
@@ -615,10 +785,10 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
         f"""
         SELECT {_listing_columns("l")}, s.captured_at AS t
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
-        WHERE lower(l.item_id) = lower(?)
+        WHERE l.item_key = ?
         ORDER BY s.id, l.item_price
         """,
-        [item_id],
+        [item_id.lower()],
     )
     if not rows:
         return None
@@ -943,6 +1113,34 @@ _BEST_SELLER_SORTS = {
     "last_seen": "last_seen",
 }
 
+# One row per listing transaction: the snapshot it first and last appeared in,
+# its latest unit price and countdown, and the item it is for.  Normally these
+# come from the aggregate the writer maintains (``transaction_summary``), which
+# is a scan of one row per transaction instead of every listing of every
+# snapshot.  A database migrated in place has no aggregate yet, so the marker is
+# absent and the view falls back to computing exactly the same rows from the
+# history — correct, just slower, until ``cli backfill`` rebuilds it.
+_BEST_SELLER_SUMMARY_SQL = """
+    SELECT transaction_id, item_id, item_type, item_level,
+           first_snapshot_id AS first_sid, last_snapshot_id AS last_sid,
+           unit_price, seconds_till_expiry AS expiry
+    FROM transaction_summary
+    ORDER BY transaction_id
+"""
+_BEST_SELLER_FALLBACK_SQL = """
+    SELECT transaction_id,
+           min(snapshot_id) AS first_sid,
+           max(snapshot_id) AS last_sid,
+           arg_min(item_id, snapshot_id) AS item_id,
+           arg_min(item_type, snapshot_id) AS item_type,
+           arg_min(item_level, snapshot_id) AS item_level,
+           arg_max(item_price / greatest(item_count, 1), snapshot_id) AS unit_price,
+           arg_max(seconds_till_expiry, snapshot_id) AS expiry
+    FROM listings
+    GROUP BY transaction_id
+    ORDER BY transaction_id
+"""
+
 
 def best_sellers(
     conn: duckdb.DuckDBPyConnection,
@@ -970,50 +1168,34 @@ def best_sellers(
         return []
     snaps = _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")
     first_id = snaps[0]["id"]
-    snap_times = {s["id"]: s["captured_at"] for s in snaps}
     snap_ids = [s["id"] for s in snaps]
+    snap_times = {s["id"]: s["captured_at"] for s in snaps}
+    # The next snapshot after the one a listing was last seen in is when it
+    # vanished; a dict keeps the lookup O(1) instead of scanning the list.
+    next_sid = {snap_ids[i]: snap_ids[i + 1] for i in range(len(snap_ids) - 1)}
     active_txs = {r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
 
-    txs: dict[int, dict] = {}
+    transactions = _rows(conn, _BEST_SELLER_SUMMARY_SQL if summary_snapshot_id(conn) == latest["id"] else _BEST_SELLER_FALLBACK_SQL)
+
     items: dict[str, dict] = {}
-    for r in _rows(
-        conn,
-        "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, item_count, seconds_till_expiry "
-        "FROM listings ORDER BY transaction_id, snapshot_id",
-    ):
-        t = txs.get(r["transaction_id"])
-        if t is None:
-            t = txs[r["transaction_id"]] = {
-                "first_sid": r["snapshot_id"],
-                "last_sid": r["snapshot_id"],
-                "item_id": r["item_id"],
-                "unit_price": r["item_price"] / max(r["item_count"], 1),
-                "expiry": r["seconds_till_expiry"],
-            }
-        else:
-            t["last_sid"] = r["snapshot_id"]
-            t["unit_price"] = r["item_price"] / max(r["item_count"], 1)
-            t["expiry"] = r["seconds_till_expiry"]
-        items.setdefault(
+    for r in transactions:
+        it = items.setdefault(
             r["item_id"],
             {"item_type": r["item_type"], "item_level": r["item_level"], "sales": 0, "expired": 0, "timed": [], "active_prices": [], "last_seen": 0.0},
         )
-
-    for tx, t in txs.items():
-        it = items[t["item_id"]]
-        it["last_seen"] = max(it["last_seen"], snap_times[t["last_sid"]])
-        if tx in active_txs:
-            it["active_prices"].append(t["unit_price"])
+        it["last_seen"] = max(it["last_seen"], snap_times[r["last_sid"]])
+        if r["transaction_id"] in active_txs:
+            it["active_prices"].append(r["unit_price"])
             continue
-        if t["expiry"] < EXPIRY_WINDOW_SECONDS:
+        if r["expiry"] < EXPIRY_WINDOW_SECONDS:
             it["expired"] += 1
             continue
         it["sales"] += 1
-        if t["first_sid"] == first_id:
+        if r["first_sid"] == first_id:
             continue  # left-censored: true listing time unknown
-        next_idx = snap_ids.index(t["last_sid"]) + 1
-        vanished_at = snap_times[snap_ids[next_idx]] if next_idx < len(snap_ids) else latest["captured_at"]
-        it["timed"].append(vanished_at - snap_times[t["first_sid"]])
+        following = next_sid.get(r["last_sid"])
+        vanished_at = snap_times[following] if following is not None else latest["captured_at"]
+        it["timed"].append(vanished_at - snap_times[r["first_sid"]])
 
     out = []
     for item_id, it in items.items():
@@ -1095,10 +1277,24 @@ def crafting_value(
     """
     latest = latest_snapshot(conn)
     latest_id = latest["id"] if latest else None
+    # Only the craftable items and their ingredients are ever priced, so read
+    # just those: ``item_key`` is the lowercased id the catalog and the recipes
+    # are keyed by, and unlike ``lower(item_id)`` it can be filtered with an
+    # index instead of scanning every listing ever stored.
+    wanted = {item_id.lower() for item_id in craftable_ids()}
+    for item_id in list(wanted):
+        for material in (recipe_of(item_id) or {}).get("materials", []):
+            if material.get("id"):
+                wanted.add(material["id"].lower())
     every: dict[str, list[float]] = {}
     active: dict[str, list[float]] = {}
     spelling: dict[str, str] = {}
-    for r in _rows(conn, "SELECT item_id, item_price, item_count, snapshot_id FROM listings"):
+    placeholders = ", ".join("?" * len(wanted))
+    for r in _rows(
+        conn,
+        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE item_key IN ({placeholders})",
+        sorted(wanted),
+    ):
         key = r["item_id"].lower()
         unit = r["item_price"] / max(r["item_count"], 1)
         every.setdefault(key, []).append(unit)
@@ -1199,7 +1395,7 @@ def search_items(
         conn,
         f"""
         SELECT item_id, item_price, item_count, snapshot_id
-        FROM listings WHERE lower(item_id) IN ({placeholders})
+        FROM listings WHERE item_key IN ({placeholders})
         """,
         keys,
     ):

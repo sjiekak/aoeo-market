@@ -512,6 +512,112 @@ def test_backfill_is_idempotent(tmp_path):
     conn.close()
 
 
+# --- derived data: item_key and the per-transaction summary -----------------
+
+
+def test_item_key_is_stored_and_backfilled(tmp_path):
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", price=10)], captured_at=1000.0)
+    assert conn.execute("SELECT item_key FROM listings").fetchone()[0] == "axe_r_i"
+    assert store.backfill_item_keys(conn) == 0  # nothing missing
+
+    # a row stored before the column existed carries NULL until the backfill
+    conn.execute(
+        """
+        INSERT INTO listings (snapshot_id, transaction_id, seller_empire_id, buyer_character_id, item_id,
+                              item_type, item_level, item_count, item_price, item_seed, seconds_till_expiry)
+        VALUES (1, 99, 7, -1, 'Sword_U_III', 'Trait', 1, 1, 50, 0, 90000)
+        """
+    )
+    assert conn.execute("SELECT item_key FROM listings WHERE transaction_id = 99").fetchone()[0] is None
+    assert store.backfill_item_keys(conn) == 1
+    assert conn.execute("SELECT item_key FROM listings WHERE transaction_id = 99").fetchone()[0] == "sword_u_iii"
+    assert store.backfill_item_keys(conn) == 0  # idempotent
+    conn.close()
+
+
+def test_best_sellers_summary_matches_the_history(tmp_path):
+    """The maintained aggregate and the on-the-fly fallback agree exactly."""
+    conn = store.open_store(tmp_path / "m.db")
+    # snapshot 1 only seeds the history: anything already present in it is
+    # left-censored, so Fast/Slow appear in snapshot 2 to be fully observed
+    store.record_snapshot(conn, [mk(9, item_id="Old_U_I", price=10, expiry=200_000)], captured_at=1000.0)
+    store.record_snapshot(
+        conn,
+        [
+            mk(9, item_id="Old_U_I", price=10, expiry=200_000),
+            mk(1, item_id="Slow_U_I", price=10, expiry=200_000),
+            mk(2, item_id="Fast_E_I", price=90, expiry=200_000),
+        ],
+        captured_at=4600.0,
+    )
+    store.record_snapshot(conn, [mk(9, item_id="Old_U_I", price=10, expiry=200_000), mk(1, item_id="Slow_U_I", price=10, expiry=200_000)], captured_at=8200.0)
+    store.record_snapshot(conn, [mk(9, item_id="Old_U_I", price=10, expiry=200_000)], captured_at=11800.0)
+
+    latest = store.latest_snapshot(conn)["id"]
+    assert store.summary_snapshot_id(conn) == latest  # advanced on every write
+    with_summary = store.best_sellers(conn, min_sales=0)
+    assert [r["item_id"] for r in with_summary] == ["Fast_E_I", "Slow_U_I", "Old_U_I"]
+    assert {r["item_id"]: r["timed_sales"] for r in with_summary} == {"Fast_E_I": 1, "Slow_U_I": 1, "Old_U_I": 0}
+
+    # without the marker the view recomputes from the history and must agree
+    conn.execute("DELETE FROM meta")
+    assert store.summary_snapshot_id(conn) is None
+    assert store.best_sellers(conn, min_sales=0) == with_summary
+
+    # the rebuild restores the marker and leaves the same answer
+    assert store.backfill_transaction_summary(conn) == 3
+    assert store.summary_snapshot_id(conn) == latest
+    assert store.best_sellers(conn, min_sales=0) == with_summary
+    conn.close()
+
+
+def test_legacy_database_backfills_item_key_and_summary(tmp_path):
+    """A database upgraded in place keeps answering correctly before and after
+    the one-shot backfill: until then the view falls back to the history."""
+    path = tmp_path / "legacy.db"
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE TABLE snapshots (id BIGINT PRIMARY KEY, captured_at DOUBLE NOT NULL)")
+    conn.execute(
+        """
+        CREATE TABLE listings (
+            snapshot_id BIGINT NOT NULL, transaction_id BIGINT NOT NULL,
+            seller_empire_id BIGINT NOT NULL, buyer_character_id BIGINT NOT NULL,
+            item_id VARCHAR NOT NULL, item_type VARCHAR NOT NULL,
+            item_level BIGINT NOT NULL, item_count BIGINT NOT NULL,
+            item_price BIGINT NOT NULL, item_seed BIGINT NOT NULL,
+            seconds_till_expiry BIGINT NOT NULL,
+            PRIMARY KEY (snapshot_id, transaction_id)
+        )
+        """
+    )
+    conn.execute("INSERT INTO snapshots VALUES (1, 1000.0)")
+    conn.execute("INSERT INTO listings VALUES (1, 1, 7, -1, 'Axe_R_I', 'Design', 1, 1, 50, 0, 200000)")
+    conn.execute("INSERT INTO snapshots VALUES (2, 4600.0)")  # the listing vanishes
+    conn.close()
+
+    conn = store.open_store(path)  # only adds the column, index, and empty tables
+    assert store.summary_snapshot_id(conn) is None
+    before = store.best_sellers(conn, min_sales=0)
+    assert [r["item_id"] for r in before] == ["Axe_R_I"]
+
+    assert store.backfill_item_keys(conn) == 1
+    assert store.backfill_transaction_summary(conn) == 1
+    assert store.summary_snapshot_id(conn) == 2
+    assert store.best_sellers(conn, min_sales=0) == before
+    conn.close()
+
+
+def test_item_lookups_use_the_normalized_key(tmp_path):
+    """The per-item views find an item regardless of the listing's spelling."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Xerxes_L_IV", price=100), mk(2, item_id="4ArcticFoxFur", item_type="Material", price=10)], captured_at=1000.0)
+
+    assert store.price_history(conn, "xerxes_l_iv")["item_id"] == "Xerxes_L_IV"
+    assert [r["item_id"] for r in store.search_items(conn, "arcticfox") if r["listed_now"]] == ["4ArcticFoxFur"]
+    conn.close()
+
+
 def test_item_recipe_cost_and_dismantle(tmp_path):
     conn = store.open_store(tmp_path / "m.db")
     store.record_snapshot(

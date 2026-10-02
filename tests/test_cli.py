@@ -88,6 +88,27 @@ def test_backfill_command_fills_old_rows_once(tmp_path, capsys):
     assert "already up to date" in capsys.readouterr().out
 
 
+def test_backfill_command_rebuilds_the_transaction_summary(tmp_path, capsys):
+    """`backfill` also derives item_key and rebuilds the best-sellers aggregate."""
+    db = tmp_path / "market.db"
+    conn = store.open_store(db)
+    store.record_snapshot(conn, [_mk(1)], captured_at=1000.0)
+    store.record_snapshot(conn, [], captured_at=4600.0)  # the listing vanishes
+    conn.execute("UPDATE listings SET item_key = NULL")  # simulate pre-column rows
+    conn.execute("DELETE FROM meta")  # simulate an aggregate that was never built
+    conn.close()
+
+    assert cli_mod.main(["backfill", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "item_key for 1" in out
+    assert "rebuilt the per-transaction summary for 1 transaction" in out
+
+    conn = store.open_store(db)
+    assert store.summary_snapshot_id(conn) == store.latest_snapshot(conn)["id"]
+    assert conn.execute("SELECT count(*) FROM listings WHERE item_key IS NULL").fetchone()[0] == 0
+    conn.close()
+
+
 def test_probe_reports_rejected_login(monkeypatch, capsys):
     """A rejected 4564 login makes `probe` fail with a clear message."""
     from types import SimpleNamespace

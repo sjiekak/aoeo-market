@@ -6,7 +6,7 @@ uv run python -m aoeo_market.cli fetch               # read the live market
 uv run python -m aoeo_market.cli fetch  --watch      # stream events
 uv run python -m aoeo_market.cli fetch  --store --quiet  # snapshot -> market.db
 uv run python -m aoeo_market.cli init-db             # create the database (schema only)
-uv run python -m aoeo_market.cli backfill            # fill expires_at on pre-existing snapshots
+uv run python -m aoeo_market.cli backfill            # derive expiry/item_key/summary on pre-existing snapshots
 
 The live commands detect your local IPv4 address as the default; pass
 ``--local-ip <ip>`` to override it.  ``fetch --store`` persists every fetched
@@ -89,22 +89,29 @@ def _init_db(args: argparse.Namespace) -> int:
 
 
 def _backfill(args: argparse.Namespace) -> int:
-    """One-shot: fill the absolute expiry of snapshots recorded before the column.
+    """One-shot: complete the derived data of snapshots recorded before it existed.
 
+    That is the absolute expiry column, the lowercased ``item_key`` every lookup
+    filters on, and the per-transaction aggregate the best-sellers view reads.
     The web server never does this implicitly, so an upgraded database runs it
-    once (the init container's ``init-db`` only adds the column).
+    once (the init container's ``init-db`` only adds the schema).
     """
     from . import store
 
     conn = store.open_store(args.db)
     try:
         filled = store.backfill_expires_at(conn)
+        keyed = store.backfill_item_keys(conn)
+        summarized = store.backfill_transaction_summary(conn)
     finally:
         conn.close()
     if filled:
         print(f"backfilled absolute expiry for {filled} listing{'s' if filled != 1 else ''} in {args.db}")
-    else:
-        print(f"{args.db} is already up to date (no listings missing an absolute expiry)")
+    if keyed:
+        print(f"backfilled item_key for {keyed} listing{'s' if keyed != 1 else ''} in {args.db}")
+    if not filled and not keyed:
+        print(f"{args.db} is already up to date (no listings missing an absolute expiry or item_key)")
+    print(f"rebuilt the per-transaction summary for {summarized} transaction{'s' if summarized != 1 else ''}")
     return 0
 
 
@@ -285,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--db", default="market.db", help="path to the database file (default market.db)")
     i.set_defaults(func=_init_db)
 
-    b = sub.add_parser("backfill", help="one-shot: fill the absolute expires_at of snapshots stored before the column existed")
+    b = sub.add_parser("backfill", help="one-shot: complete the derived columns and aggregate of snapshots stored before they existed")
     b.add_argument("--db", default="market.db", help="path to the database file (default market.db)")
     b.set_defaults(func=_backfill)
 
