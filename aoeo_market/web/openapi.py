@@ -699,6 +699,8 @@ def build_spec(*, include_ingestion: bool = False) -> dict:
                     _query_param("q", "Case-insensitive substring filter on item id."),
                     _query_param("sort", "Sort column.", enum=list(store._SORT_COLUMNS), default="price"),
                     _query_param("dir", "Sort direction.", enum=["asc", "desc"], default="asc"),
+                    _query_param("limit", "Return at most this many rows (default: the whole list).", schema_type="integer"),
+                    _query_param("offset", "Skip this many rows before applying limit.", schema_type="integer", default=0),
                 ],
                 "responses": {
                     "200": _json_response(
