@@ -4,7 +4,9 @@ Serves the dashboard single-page app from :mod:`aoeo_market.web.static` and a
 JSON API over the snapshot database.  This process is the **single owner** of
 the DuckDB file: the ``fetch --store`` CLI posts each snapshot to
 ``POST /api/snapshot`` instead of touching the database itself, so exactly
-one component ever opens the file (read-write, per request)::
+one component ever opens the file — one read-write connection held for the
+process lifetime (never a second one, because DuckDB forbids mixing connection
+modes on the same file)::
 
     uv run python -m aoeo_market.web --db market.db --port 8000 --write-port 8001
     uv run python -m aoeo_market.cli fetch --store http://127.0.0.1:8001
@@ -34,13 +36,17 @@ localhost).
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
 import json
 import sys
 import threading
 import urllib.parse
+from collections.abc import Callable
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -62,6 +68,10 @@ _STATIC_TYPES = {
 }
 
 _JSON = "application/json; charset=utf-8"
+
+# Responses smaller than this are not worth gzipping: the framing overhead and
+# the CPU cost more than the bytes saved.
+_GZIP_MIN_BYTES = 1024
 
 # The single write endpoint, served only by the write listener (--write-port).
 _WRITE_ENDPOINT = "/api/snapshot"
@@ -135,9 +145,14 @@ class WebApp:
         self.db_path = db_path
         # DuckDB forbids mixing read-only and read-write connections to the
         # same file in one process, so every connection here is read-write;
-        # this process is the single owner of the file by design.  The lock
-        # serializes snapshot writes between request threads.
-        self._write_lock = threading.Lock()
+        # this process is the single owner of the file by design.  One
+        # connection is opened for the process lifetime (not per request, which
+        # re-ran the schema statements every time) and the lock — DuckDB
+        # connections are not safe for concurrent use — serializes every query
+        # and snapshot write across the request threads.
+        self._lock = threading.Lock()
+        self._connection: duckdb.DuckDBPyConnection | None = None
+        self._in_memory = False
         # The expensive read views are pure functions of the stored snapshots,
         # so one cache keyed by the latest snapshot id serves every request
         # until a new snapshot arrives.
@@ -158,11 +173,11 @@ class WebApp:
             if path.startswith("/static/"):
                 return self._static(path[len("/static/") :])
             if path == "/api/overview":
-                return self._json(store.market_overview(self._conn()))
+                return self._json(self._query(store.market_overview))
             if path == "/api/listings":
-                return self._json(
-                    store.active_listings(
-                        self._conn(),
+                rows = self._query(
+                    lambda conn: store.active_listings(
+                        conn,
                         item_type=query.get("type", [None])[0] or None,
                         q=query.get("q", [None])[0] or None,
                         sort=query.get("sort", ["price"])[0],
@@ -170,46 +185,55 @@ class WebApp:
                         cache=self._views,
                     )
                 )
+                return self._json(self._page(rows, query))
             if path == "/api/not-on-sale":
                 return self._json(
-                    store.items_not_on_sale(
-                        self._conn(),
-                        order=query.get("order", ["median_unit_price"])[0],
-                        direction=query.get("dir", ["desc"])[0],
+                    self._query(
+                        lambda conn: store.items_not_on_sale(
+                            conn,
+                            order=query.get("order", ["median_unit_price"])[0],
+                            direction=query.get("dir", ["desc"])[0],
+                        )
                     )
                 )
             if path == "/api/search":
                 return self._json(
-                    store.search_items(
-                        self._conn(),
-                        query.get("q", [""])[0],
-                        limit=self._int_param(query, "limit", store.SEARCH_LIMIT),
+                    self._query(
+                        lambda conn: store.search_items(
+                            conn,
+                            query.get("q", [""])[0],
+                            limit=self._int_param(query, "limit", store.SEARCH_LIMIT),
+                        )
                     )
                 )
             if path == "/api/best-sellers":
                 return self._json(
-                    store.best_sellers(
-                        self._conn(),
-                        order=query.get("order", ["median_time"])[0],
-                        direction=query.get("dir", ["asc"])[0],
-                        min_sales=self._int_param(query, "min_sales", 1),
-                        cache=self._views,
+                    self._query(
+                        lambda conn: store.best_sellers(
+                            conn,
+                            order=query.get("order", ["median_time"])[0],
+                            direction=query.get("dir", ["asc"])[0],
+                            min_sales=self._int_param(query, "min_sales", 1),
+                            cache=self._views,
+                        )
                     )
                 )
             if path == "/api/best-value":
                 return self._json(
-                    store.crafting_value(
-                        self._conn(),
-                        order=query.get("order", ["value_ratio"])[0],
-                        direction=query.get("dir", ["desc"])[0],
-                        cache=self._views,
+                    self._query(
+                        lambda conn: store.crafting_value(
+                            conn,
+                            order=query.get("order", ["value_ratio"])[0],
+                            direction=query.get("dir", ["desc"])[0],
+                            cache=self._views,
+                        )
                     )
                 )
             if path == "/api/recently-removed":
-                return self._json(store.recently_removed(self._conn(), window=self._window_param(query)))
+                return self._json(self._query(lambda conn: store.recently_removed(conn, window=self._window_param(query))))
             if path.startswith("/api/item/"):
                 item_id = urllib.parse.unquote(path[len("/api/item/") :])
-                history = store.price_history(self._conn(), item_id)
+                history = self._query(lambda conn: store.price_history(conn, item_id))
                 if history is None:
                     return self._error(404, f"item {item_id!r} was never observed")
                 return self._json(history)
@@ -239,12 +263,12 @@ class WebApp:
         except (TypeError, ValueError) as exc:
             return self._error(400, str(exc))
         try:
-            with self._write_lock:
-                conn = store.open_store(self.db_path)
-                try:
-                    snapshot_id = store.record_snapshot(conn, listings, captured_at)
-                finally:
-                    conn.close()
+            with self._lock:
+                if not Path(self.db_path).exists():
+                    # The first snapshot creates the file; drop the in-memory
+                    # reader so every later request follows the real database.
+                    self._open_file_connection()
+                snapshot_id = store.record_snapshot(self._conn(), listings, captured_at)
         except (OSError, duckdb.Error) as exc:
             return self._error(500, f"database error: {exc}")
         return 201, _JSON, json.dumps({"snapshot_id": snapshot_id, "listings": len(listings)}).encode()
@@ -273,11 +297,7 @@ class WebApp:
         if not Path(self.db_path).exists():
             return 503, _JSON, json.dumps({"status": "not ready", "database": "not initialized"}).encode()
         try:
-            conn = store.open_store(self.db_path)
-            try:
-                count = store.snapshot_count(conn)
-            finally:
-                conn.close()
+            count = self._query(store.snapshot_count)
         except (duckdb.Error, OSError) as exc:
             return 503, _JSON, json.dumps({"status": "not ready", "database": f"error: {exc}"}).encode()
         return 200, _JSON, json.dumps({"status": "ready", "database": "ok", "snapshots": count}).encode()
@@ -302,15 +322,82 @@ class WebApp:
         except OSError:
             return self._error(404, f"no static file {name!r}")
 
+    def _query(self, run: Callable[[duckdb.DuckDBPyConnection], Any]) -> Any:
+        """Run *run* against the process-wide connection.
+
+        The lock serializes queries and writes, because one DuckDB connection
+        is not safe to use from two threads at once.  *run* is called inside
+        the lock, so it must not do slow non-database work (the JSON
+        serialization happens after this returns).
+        """
+        with self._lock:
+            return run(self._conn())
+
+    def _open_file_connection(self) -> None:
+        """Replace the cached connection with the on-disk database (lock held)."""
+        if self._connection is not None:
+            self._connection.close()
+        self._connection = store.open_store(self.db_path)
+        self._in_memory = False
+
     def _conn(self) -> duckdb.DuckDBPyConnection:
-        # Before the first snapshot, serve the empty state from an in-memory
-        # schema instead of erroring.
-        if not Path(self.db_path).exists():
-            return store.open_memory()
-        return store.open_store(self.db_path)
+        """The one connection to the snapshot database; the lock must be held.
+
+        Before the first snapshot the file does not exist yet, so the empty
+        state is served from an in-memory schema instead of erroring; the
+        cached in-memory connection is swapped for the real one as soon as the
+        file appears.
+        """
+        if self._connection is not None and not (self._in_memory and Path(self.db_path).exists()):
+            return self._connection
+        if Path(self.db_path).exists():
+            self._open_file_connection()
+        else:
+            if self._connection is not None:
+                self._connection.close()
+            self._connection = store.open_memory()
+            self._in_memory = True
+        return self._connection
+
+    def close(self) -> None:
+        """Close the process-wide connection (the server owns it for its life)."""
+        with self._lock:
+            if self._connection is not None:
+                self._connection.close()
+                self._connection = None
+
+    def data_validator(self) -> str:
+        """A cheap cache validator for the database-backed reads.
+
+        Every read view is a pure function of the stored snapshots, so the
+        latest snapshot id tells a client whether its copy is still current.
+        Unlike a hash of the body it is known *before* the view is computed, so
+        a revalidating request skips the query and the serialization entirely.
+        """
+        with self._lock:
+            latest = store.latest_snapshot(self._conn())
+        snapshot_id = latest["id"] if latest else "none"
+        return f'"snap:{snapshot_id}"'
 
     @staticmethod
-    def _int_param(query: dict[str, list[str]], name: str, default: int) -> int:
+    def _page(rows: list[dict], query: dict[str, list[str]]) -> list[dict]:
+        """Slice *rows* by the optional ``offset`` and ``limit`` query params.
+
+        Both are opt-in: without them the whole list is returned, which is what
+        the dashboard asks for.  ``limit`` lets a large listings result be
+        paged instead of transferred whole.
+        """
+        offset = WebApp._int_param(query, "offset", 0)
+        limit = WebApp._int_param(query, "limit", None)
+        if offset < 0:
+            raise _BadParam("offset must be zero or positive")
+        if limit is not None and limit < 1:
+            raise _BadParam("limit must be a positive integer")
+        window = rows[offset:]
+        return window[:limit] if limit is not None else window
+
+    @staticmethod
+    def _int_param(query: dict[str, list[str]], name: str, default: int | None) -> int | None:
         raw = query.get(name, [None])[0]
         if raw is None:
             return default
@@ -354,10 +441,37 @@ class _Handler(BaseHTTPRequestHandler):
 
     app: WebApp
 
-    def _respond(self, status: int, ctype: str, body: bytes) -> None:
+    def _respond(self, status: int, ctype: str, body: bytes, *, etag: str | None = None) -> None:
+        """Send one response, revalidating with ETag and compressing when asked.
+
+        With no *etag* given, a successful body is hashed — that is what
+        non-database routes (static files, the OpenAPI document) revalidate by.
+        The database-backed routes pass the cheap snapshot validator instead
+        (see :meth:`WebApp.data_validator`), so their 304 is decided before the
+        view is computed.  ``Cache-Control: no-cache`` makes the client
+        revalidate rather than reuse a stale copy, because a new snapshot
+        changes the data under the same URL.  When the client accepts gzip the
+        body is compressed — the listings payload drops from ~950 KB to ~120 KB.
+        """
+        if etag is None and status == 200 and body:
+            etag = '"' + hashlib.md5(body, usedforsecurity=False).hexdigest() + '"'
+        if status == 200 and etag is not None and self.headers.get("If-None-Match") == etag:
+            status, body = 304, b""
+        encoding = None
+        if len(body) >= _GZIP_MIN_BYTES and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body = gzip.compress(body)
+            encoding = "gzip"
         self.send_response(status)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
+        if etag is not None and status in (200, 304):
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+        if encoding:
+            self.send_header("Content-Encoding", encoding)
+            self.send_header("Vary", "Accept-Encoding")
+        if status != 304:
+            # A 304 carries no body, so it carries no Content-Length either.
+            self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -375,8 +489,17 @@ class _ReadHandler(_Handler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
-        status, ctype, body = self.app.handle(parsed.path, urllib.parse.parse_qs(parsed.query))
-        self._respond(status, ctype, body)
+        query = urllib.parse.parse_qs(parsed.query)
+        # A read of the database is validated by the snapshot id, checked
+        # *before* the view is computed so a revalidation is a cheap 304.  The
+        # other routes (the shell, static files, OpenAPI) hash their body
+        # instead, since their content does not follow the snapshot.
+        validator = self.app.data_validator() if parsed.path.startswith("/api/") and parsed.path != _WRITE_ENDPOINT else None
+        if validator is not None and self.headers.get("If-None-Match") == validator:
+            self._respond(304, _JSON, b"", etag=validator)
+            return
+        status, ctype, body = self.app.handle(parsed.path, query)
+        self._respond(status, ctype, body, etag=validator)
 
     def do_POST(self) -> None:
         self._read_body()
@@ -449,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
         write_server.shutdown()
         write_server.server_close()
         read_server.server_close()
+        app.close()
     return 0
 
 

@@ -164,7 +164,7 @@ with a 404 that says where it lives.
 | `GET /healthz` | liveness probe — always 200 while the process is up |
 | `GET /readyz` | readiness probe — 200 + `{"status": "ready", "snapshots": n}` when the database is initialized and openable, 503 otherwise |
 | `GET /api/overview` | snapshot stats, supply history, price histogram, type/rarity breakdown, top movers |
-| `GET /api/listings?type=&q=&sort=&dir=` | active listings of the latest snapshot, each enriched with the catalog display name, kind, icon and authoritative rarity; `q` matches the item id and its display name |
+| `GET /api/listings?type=&q=&sort=&dir=&limit=&offset=` | active listings of the latest snapshot, each enriched with the catalog display name, kind, icon and authoritative rarity; `q` matches the item id and its display name, and `limit`/`offset` page a large result (the whole list by default) |
 | `GET /api/search?q=&limit=` | catalog items whose id or display name contains `q`, ranked exact id, id prefix, name prefix, then any other match (an empty `q` matches nothing); each row carries `listed_now`, `active_count`, the current median unit price while listed and the historical median either way |
 | `GET /api/item/<item_id>` | the item's curated identity (name, kind, icon, rarity), its current listings and its previous (vanished) listings as full listing rows with the EXPIRED vs REMOVED classification, the price history (`series`, `points`), plus `recipe` (ingredients with quantities, per-unit prices and a `cost` estimate) and `dismantle` (the Gear Dismantler output for the item's type and rarity) — each omitted when unknown |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
@@ -273,18 +273,41 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 
 ## Performance
 
-- Every read view is a pure function of the stored snapshots, and the snapshots
-  only change when one is appended. The server therefore memoizes the expensive
-  parts of the listings, best-sellers and best-value views in a
-  `store.SnapshotCache` keyed by the latest snapshot id: the first request after
-  a new snapshot computes them, and every later request — including a different
-  sort order of the same view — is served from memory until the next snapshot
-  arrives.
-- Best sellers aggregates one row per listing *transaction* in SQL instead of
-  pulling every listing of every snapshot into Python; best value reads only the
-  craftable items and their ingredients (resolving the catalog's lowercase keys
-  to the spelling the listings store) and aggregates its medians in DuckDB.
-  Both views rank and filter the cached rows per request, which is cheap.
-- Caching is per `WebApp` instance, so it never leaks between servers or tests,
-  and it is transparent: calling a view without a cache computes it as before.
+- **Views are memoized per snapshot.** Every read view is a pure function of
+  the stored snapshots, and the snapshots only change when one is appended. The
+  server therefore keeps the expensive parts of the listings, best-sellers and
+  best-value views in a `store.SnapshotCache` keyed by the latest snapshot id:
+  the first request after a new snapshot computes them, and every later request
+  — including a different sort order of the same view — is served from memory
+  until the next snapshot arrives. Caching is per `WebApp` instance, so it never
+  leaks between servers or tests, and it is transparent: calling a view without
+  a cache computes it as before.
+- **Best sellers and best value aggregate in SQL.** Best sellers groups one row
+  per listing *transaction* instead of pulling every listing of every snapshot
+  into Python; best value reads only the craftable items and their ingredients
+  (resolving the catalog's lowercase keys to the spelling the listings store)
+  and aggregates its medians in DuckDB. Both views rank and filter the cached
+  rows per request, which is cheap.
+- **One connection for the process.** The server opens the DuckDB file once
+  (lazily, on the first request) and reuses it, instead of opening a
+  read-write connection and re-running the schema statements on every request.
+  A lock serializes the queries, because a single DuckDB connection must not be
+  used by two request threads at once. Because the file stays open, the server
+  holds its lock for as long as it runs: feed snapshots through
+  `POST /api/snapshot` on the write port, never by pointing another process at
+  the same file.
+- **Revalidation with `ETag`.** Database-backed reads carry
+  `ETag: "snap:<latest snapshot id>"` and `Cache-Control: no-cache`. Every view
+  is a pure function of the stored snapshots, so the id is a complete validator
+  — and because it is known before the view is computed, a request with a
+  matching `If-None-Match` is answered with a 304 without running the query or
+  serializing the payload (best sellers drops from ~450 ms to ~2 ms on the
+  reference database). The shell, static files and `/openapi.json` are
+  validated by a hash of their body instead, since their content does not
+  follow the snapshot.
+- **gzip on request.** When the client sends `Accept-Encoding: gzip`, bodies
+  over 1 KB are compressed (`Vary: Accept-Encoding`): the listings payload
+  drops from ~920 KB to ~117 KB, best sellers from ~424 KB to ~60 KB.
+- **Paging.** `/api/listings` accepts optional `limit`/`offset` so a caller
+  that does not need the whole list can ask for a page of it.
 
