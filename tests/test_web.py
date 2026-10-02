@@ -647,3 +647,160 @@ def test_empty_database_responses(tmp_path):
     assert body == b"[]"
     _, _, body = app.handle("/api/recently-removed")
     assert body == b"[]"
+
+
+# --- pagination, connection reuse, and HTTP response plumbing ---------------
+
+
+def test_listings_limit_and_offset(tmp_path):
+    import json
+
+    app = app_for(tmp_path)
+    _, _, body = app.handle("/api/listings", {"sort": ["item"], "dir": ["asc"]})
+    all_rows = json.loads(body)
+
+    status, _, body = app.handle("/api/listings", {"sort": ["item"], "dir": ["asc"], "limit": ["1"]})
+    assert status == 200
+    assert json.loads(body) == all_rows[:1]
+
+    _, _, body = app.handle("/api/listings", {"sort": ["item"], "dir": ["asc"], "limit": ["1"], "offset": ["1"]})
+    assert json.loads(body) == all_rows[1:2]
+
+    # an offset past the end is an empty page, not an error
+    _, _, body = app.handle("/api/listings", {"offset": ["999"]})
+    assert json.loads(body) == []
+
+    # malformed paging is rejected
+    for bad in ({"limit": ["0"]}, {"limit": ["-2"]}, {"limit": ["x"]}, {"offset": ["-1"]}, {"offset": ["x"]}):
+        status, _, _ = app.handle("/api/listings", bad)
+        assert status == 400, bad
+
+
+def test_listings_pagination_is_documented(tmp_path):
+    import json
+
+    app = WebApp(str(tmp_path / "empty.db"))
+    spec = json.loads(app.handle("/openapi.json")[2])
+    params = spec["paths"]["/api/listings"]["get"]["parameters"]
+    assert [p["name"] for p in params] == ["type", "q", "sort", "dir", "limit", "offset"]
+    assert params[4]["schema"] == {"type": "integer"}
+
+
+def test_connection_is_reused_across_requests(tmp_path, monkeypatch):
+    """The server opens the database once, not once per request."""
+    from aoeo_market.web import server as web_server
+
+    db = str(tmp_path / "m.db")
+    seed(db)
+
+    opens: list[str] = []
+    real = web_server.store.open_store
+
+    def counting_open(path, **kwargs):
+        opens.append(str(path))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(web_server.store, "open_store", counting_open)
+
+    app = WebApp(db)
+    for _ in range(5):
+        assert app.handle("/api/overview")[0] == 200
+    assert opens == [db]  # one connection served all five requests
+    app.close()
+
+
+def _request(url: str, headers: dict[str, str] | None = None) -> tuple[int, dict, bytes]:
+    """One HTTP request returning ``(status, headers, body)`` (304 included)."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(url, headers=headers or {})
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, dict(response.headers), response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers), exc.read()
+
+
+def test_data_validator_names_the_latest_snapshot(tmp_path):
+    empty = WebApp(str(tmp_path / "empty.db"))
+    assert empty.data_validator() == '"snap:none"'
+    empty.close()
+
+    app = app_for(tmp_path)  # seed() records two snapshots
+    assert app.data_validator() == '"snap:2"'
+    app.close()
+
+
+def test_etag_revalidation_skips_the_view(tmp_path, monkeypatch):
+    """A 304 is decided from the snapshot id, before the view is computed."""
+    import threading
+
+    from aoeo_market.web import server as web_server
+
+    app = app_for(tmp_path)
+    validator = app.data_validator()
+
+    def explode(*args, **kwargs):
+        raise AssertionError("a revalidation must not compute the view")
+
+    monkeypatch.setattr(web_server.store, "active_listings", explode)
+    read, write = web_server.create_servers(app, "127.0.0.1", 0, "127.0.0.1", 0)
+    thread = threading.Thread(target=read.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{read.server_address[1]}/api/listings"
+        status, headers, body = _request(url, {"If-None-Match": validator})
+        assert status == 304
+        assert body == b""
+        assert headers["ETag"] == validator
+    finally:
+        read.shutdown()
+        read.server_close()
+        write.server_close()
+        thread.join()
+        app.close()
+
+
+def test_http_gzip_and_etag_revalidation(tmp_path):
+    """A big payload is compressed on request and revalidated with a 304."""
+    import gzip
+    import threading
+
+    from aoeo_market.web import server as web_server
+
+    # enough listings that the payload clears the compression threshold
+    db = tmp_path / "many.db"
+    conn = store.open_store(db)
+    store.record_snapshot(conn, [mk(i, item_id=f"Item{i:03d}_U_I", price=100 + i) for i in range(1, 41)], captured_at=1000.0)
+    conn.close()
+
+    app = WebApp(str(db))
+    read, write = web_server.create_servers(app, "127.0.0.1", 0, "127.0.0.1", 0)
+    thread = threading.Thread(target=read.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{read.server_address[1]}/api/listings"
+    try:
+        # the identity body, for comparison
+        status, headers, plain = _request(url)
+        assert status == 200
+        assert headers.get("Content-Encoding", "") != "gzip"
+        assert headers["ETag"].startswith('"') and headers["Cache-Control"] == "no-cache"
+
+        # the same resource, gzipped when the client offers it
+        status, headers, body = _request(url, {"Accept-Encoding": "gzip"})
+        assert status == 200
+        assert headers["Content-Encoding"] == "gzip"
+        assert headers["Vary"] == "Accept-Encoding"
+        assert gzip.decompress(body) == plain
+
+        # revalidating with the ETag skips the body entirely
+        status, headers, body = _request(url, {"If-None-Match": headers["ETag"]})
+        assert status == 304
+        assert body == b""
+    finally:
+        read.shutdown()
+        read.server_close()
+        write.server_close()
+        thread.join()
+        app.close()
