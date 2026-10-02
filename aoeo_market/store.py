@@ -36,10 +36,12 @@ from __future__ import annotations
 
 import math
 import os
+import threading
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -215,6 +217,52 @@ def _scalar(conn: duckdb.DuckDBPyConnection, sql: str, params: Sequence = ()) ->
     return row[0] if row else 0
 
 
+class SnapshotCache:
+    """Per-snapshot memoization of the expensive read views.
+
+    Every read view is a pure function of the stored snapshots, and the
+    snapshots only change when a new one is appended — so keying the cache by
+    the latest snapshot id invalidates it exactly when new data arrives.
+    Callers pass one shared instance (the web server owns it) and the view
+    functions consult it; a plain call without a cache computes as before.
+
+    The lock makes it safe for the web server's request threads: a value is
+    computed outside the lock (so two threads asking for the same cold key may
+    both compute it) and only stored while its snapshot id is still current.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._snapshot_id: int | None = None
+        self._values: dict[str, Any] = {}
+
+    def get(self, snapshot_id: int, key: str, compute: Callable[[], Any]) -> Any:
+        """Return the memoized value for *key*, computing it once if absent."""
+        with self._lock:
+            if snapshot_id != self._snapshot_id:
+                self._values = {}
+                self._snapshot_id = snapshot_id
+            if key in self._values:
+                return self._values[key]
+        value = compute()
+        self.put(snapshot_id, key, value)
+        return value
+
+    def put(self, snapshot_id: int, key: str, value: Any) -> None:
+        """Store *value* for *key*; a newer snapshot drops every older entry."""
+        with self._lock:
+            if snapshot_id != self._snapshot_id:
+                self._values = {}
+                self._snapshot_id = snapshot_id
+            self._values[key] = value
+
+    def clear(self) -> None:
+        """Drop every memoized value (used when the database changes shape)."""
+        with self._lock:
+            self._values = {}
+            self._snapshot_id = None
+
+
 def record_snapshot(
     conn: duckdb.DuckDBPyConnection,
     listings: Iterable[Listing],
@@ -324,32 +372,43 @@ def active_listings(
     q: str | None = None,
     sort: str = "price",
     direction: str = "asc",
+    cache: SnapshotCache | None = None,
 ) -> list[dict]:
     """Listings of one snapshot (the latest by default), filtered and sorted.
 
     ``sort`` must be a key of :data:`_SORT_COLUMNS`; ``direction`` ``asc`` or
     ``desc``.  ``q`` is a case-insensitive substring filter on the item id
     **and** its catalog display name (so "xerxes" and "the Great" both match).
+
+    With a *cache* the enriched rows are computed once per snapshot and query
+    shape; the sort and the display-name filter only ever run over that
+    snapshot's rows, so they are cheap to redo.
     """
     if snapshot_id is None:
         latest = latest_snapshot(conn)
         snapshot_id = latest["id"] if latest else -1
-    where = "snapshot_id = ?"
-    params: list = [snapshot_id]
-    if item_type:
-        where += " AND item_type = ?"
-        params.append(item_type)
-    col = _SORT_COLUMNS.get(sort, "item_price")
     if direction not in ("asc", "desc"):
         direction = "asc"
-    rows = _rows(conn, f"SELECT {_listing_columns()} FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
-    out = [_listing_dict(r) for r in rows]
-    if q:
-        # Applied after enrichment so the display name is searchable too; the
-        # SQL sort order is preserved.
-        needle = q.lower()
-        out = [d for d in out if needle in d["item_id"].lower() or (d.get("name") and needle in d["name"].lower())]
-    return out
+
+    def compute() -> list[dict]:
+        where = "snapshot_id = ?"
+        params: list = [snapshot_id]
+        if item_type:
+            where += " AND item_type = ?"
+            params.append(item_type)
+        col = _SORT_COLUMNS.get(sort, "item_price")
+        rows = _rows(conn, f"SELECT {_listing_columns()} FROM listings WHERE {where} ORDER BY {col} {direction.upper()}, item_id", params)
+        out = [_listing_dict(r) for r in rows]
+        if q:
+            # Applied after enrichment so the display name is searchable too; the
+            # SQL sort order is preserved.
+            needle = q.lower()
+            out = [d for d in out if needle in d["item_id"].lower() or (d.get("name") and needle in d["name"].lower())]
+        return out
+
+    if cache is None or snapshot_id == -1:
+        return compute()
+    return cache.get(snapshot_id, f"listings|{item_type or ''}|{q or ''}|{sort}|{direction}", compute)
 
 
 # --- overview --------------------------------------------------------------
@@ -943,6 +1002,94 @@ _BEST_SELLER_SORTS = {
     "last_seen": "last_seen",
 }
 
+# One row per listing transaction: the snapshot it first and last appeared in,
+# its latest unit price and countdown, and the item it is for.  The item fields
+# are taken at the first snapshot (``arg_min``) to match the old scan, which
+# read them from a transaction's first row.  Aggregating in SQL turns the
+# whole-history listing scan into one row per transaction — the expensive part
+# of this view, and the part the snapshot cache stores.
+_BEST_SELLER_TX_SQL = """
+    SELECT transaction_id,
+           min(snapshot_id) AS first_sid,
+           max(snapshot_id) AS last_sid,
+           arg_min(item_id, snapshot_id) AS item_id,
+           arg_min(item_type, snapshot_id) AS item_type,
+           arg_min(item_level, snapshot_id) AS item_level,
+           arg_max(item_price / greatest(item_count, 1), snapshot_id) AS unit_price,
+           arg_max(seconds_till_expiry, snapshot_id) AS expiry
+    FROM listings
+    GROUP BY transaction_id
+    ORDER BY transaction_id
+"""
+
+
+def _best_seller_rows(conn: duckdb.DuckDBPyConnection, latest: dict, cache: SnapshotCache | None) -> list[dict]:
+    """Per-item best-seller rows, before ordering and ``min_sales`` filtering.
+
+    The whole computation depends only on the stored snapshots, so with a
+    *cache* it runs once per snapshot id; ordering and filtering stay in
+    :func:`best_sellers` and are redone per request.
+    """
+
+    def compute() -> list[dict]:
+        snaps = _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")
+        first_id = snaps[0]["id"]
+        snap_ids = [s["id"] for s in snaps]
+        snap_times = {s["id"]: s["captured_at"] for s in snaps}
+        # The next snapshot after the one a listing was last seen in is when it
+        # vanished; a dict keeps the lookup O(1) instead of scanning the list.
+        next_sid = {snap_ids[i]: snap_ids[i + 1] for i in range(len(snap_ids) - 1)}
+        active_txs = {r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
+
+        items: dict[str, dict] = {}
+        for r in _rows(conn, _BEST_SELLER_TX_SQL):
+            it = items.setdefault(
+                r["item_id"],
+                {"item_type": r["item_type"], "item_level": r["item_level"], "sales": 0, "expired": 0, "timed": [], "active_prices": [], "last_seen": 0.0},
+            )
+            it["last_seen"] = max(it["last_seen"], snap_times[r["last_sid"]])
+            if r["transaction_id"] in active_txs:
+                it["active_prices"].append(r["unit_price"])
+                continue
+            if r["expiry"] < EXPIRY_WINDOW_SECONDS:
+                it["expired"] += 1
+                continue
+            it["sales"] += 1
+            if r["first_sid"] == first_id:
+                continue  # left-censored: true listing time unknown
+            following = next_sid.get(r["last_sid"])
+            vanished_at = snap_times[following] if following is not None else latest["captured_at"]
+            it["timed"].append(vanished_at - snap_times[r["first_sid"]])
+
+        out = []
+        for item_id, it in items.items():
+            rar = rarity_of(item_id)
+            out.append(
+                {
+                    "item_id": item_id,
+                    "name": name_of(item_id),
+                    **icon_fields(item_id),
+                    "item_type": it["item_type"],
+                    "item_level": it["item_level"],
+                    "rarity": rar[1] if rar else None,
+                    "rarity_rank": rar[0] if rar else 0,
+                    "sales": it["sales"],
+                    "timed_sales": len(it["timed"]),
+                    "expired": it["expired"],
+                    "median_time": median(it["timed"]) if it["timed"] else None,
+                    "min_time": min(it["timed"]) if it["timed"] else None,
+                    "max_time": max(it["timed"]) if it["timed"] else None,
+                    "active_count": len(it["active_prices"]),
+                    "current_median_unit_price": median(it["active_prices"]) if it["active_prices"] else None,
+                    "last_seen": it["last_seen"],
+                }
+            )
+        return out
+
+    if cache is None:
+        return compute()
+    return cache.get(latest["id"], "best-sellers", compute)
+
 
 def best_sellers(
     conn: duckdb.DuckDBPyConnection,
@@ -950,6 +1097,7 @@ def best_sellers(
     order: str = "median_time",
     direction: str = "asc",
     min_sales: int = 1,
+    cache: SnapshotCache | None = None,
 ) -> list[dict]:
     """Items ranked by how fast their listings sell — time-to-sale.
 
@@ -968,79 +1116,7 @@ def best_sellers(
     latest = latest_snapshot(conn)
     if latest is None:
         return []
-    snaps = _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")
-    first_id = snaps[0]["id"]
-    snap_times = {s["id"]: s["captured_at"] for s in snaps}
-    snap_ids = [s["id"] for s in snaps]
-    active_txs = {r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
-
-    txs: dict[int, dict] = {}
-    items: dict[str, dict] = {}
-    for r in _rows(
-        conn,
-        "SELECT transaction_id, snapshot_id, item_id, item_type, item_level, item_price, item_count, seconds_till_expiry "
-        "FROM listings ORDER BY transaction_id, snapshot_id",
-    ):
-        t = txs.get(r["transaction_id"])
-        if t is None:
-            t = txs[r["transaction_id"]] = {
-                "first_sid": r["snapshot_id"],
-                "last_sid": r["snapshot_id"],
-                "item_id": r["item_id"],
-                "unit_price": r["item_price"] / max(r["item_count"], 1),
-                "expiry": r["seconds_till_expiry"],
-            }
-        else:
-            t["last_sid"] = r["snapshot_id"]
-            t["unit_price"] = r["item_price"] / max(r["item_count"], 1)
-            t["expiry"] = r["seconds_till_expiry"]
-        items.setdefault(
-            r["item_id"],
-            {"item_type": r["item_type"], "item_level": r["item_level"], "sales": 0, "expired": 0, "timed": [], "active_prices": [], "last_seen": 0.0},
-        )
-
-    for tx, t in txs.items():
-        it = items[t["item_id"]]
-        it["last_seen"] = max(it["last_seen"], snap_times[t["last_sid"]])
-        if tx in active_txs:
-            it["active_prices"].append(t["unit_price"])
-            continue
-        if t["expiry"] < EXPIRY_WINDOW_SECONDS:
-            it["expired"] += 1
-            continue
-        it["sales"] += 1
-        if t["first_sid"] == first_id:
-            continue  # left-censored: true listing time unknown
-        next_idx = snap_ids.index(t["last_sid"]) + 1
-        vanished_at = snap_times[snap_ids[next_idx]] if next_idx < len(snap_ids) else latest["captured_at"]
-        it["timed"].append(vanished_at - snap_times[t["first_sid"]])
-
-    out = []
-    for item_id, it in items.items():
-        if len(it["timed"]) < min_sales:
-            continue
-        rar = rarity_of(item_id)
-        out.append(
-            {
-                "item_id": item_id,
-                "name": name_of(item_id),
-                **icon_fields(item_id),
-                "item_type": it["item_type"],
-                "item_level": it["item_level"],
-                "rarity": rar[1] if rar else None,
-                "rarity_rank": rar[0] if rar else 0,
-                "sales": it["sales"],
-                "timed_sales": len(it["timed"]),
-                "expired": it["expired"],
-                "median_time": median(it["timed"]) if it["timed"] else None,
-                "min_time": min(it["timed"]) if it["timed"] else None,
-                "max_time": max(it["timed"]) if it["timed"] else None,
-                "active_count": len(it["active_prices"]),
-                "current_median_unit_price": median(it["active_prices"]) if it["active_prices"] else None,
-                "last_seen": it["last_seen"],
-            }
-        )
-
+    out = [r for r in _best_seller_rows(conn, latest, cache) if r["timed_sales"] >= min_sales]
     col = _BEST_SELLER_SORTS.get(order, "median_time")
     if col in ("item_id", "item_type", "last_seen"):
         key = lambda d: d[col]
@@ -1064,11 +1140,116 @@ _CRAFT_VALUE_SORTS = {
 }
 
 
+def _crafting_value_items() -> set[str]:
+    """Lowercase keys of every item whose price this view needs.
+
+    That is each craftable item plus the ingredients of its recipe — a few
+    hundred ids, instead of the whole listing history.
+    """
+    wanted: set[str] = set()
+    for item_id in craftable_ids():
+        wanted.add(item_id.lower())
+        for material in (recipe_of(item_id) or {}).get("materials", []):
+            if material.get("id"):
+                wanted.add(material["id"].lower())
+    return wanted
+
+
+def _crafting_value_rows(conn: duckdb.DuckDBPyConnection, latest_id: int | None, cache: SnapshotCache | None) -> list[dict]:
+    """Craftable-item value rows, before ordering.
+
+    Only the craftable items and their ingredients are read, and their current
+    and historical medians are aggregated by DuckDB.  The whole computation
+    depends only on the stored snapshots, so with a *cache* it runs once per
+    snapshot id; ordering stays in :func:`crafting_value`.
+    """
+
+    def compute() -> list[dict]:
+        # Listings keep the server's spelling while the catalog is keyed in
+        # lowercase, so resolve each wanted key to the spelling actually stored
+        # — that lets the scan be an equality filter instead of lower() on
+        # every row, which no index can serve.
+        wanted = _crafting_value_items()
+        spelling = {r["item_id"].lower(): r["item_id"] for r in _rows(conn, "SELECT DISTINCT item_id FROM listings")}
+        ids = sorted(spelling[key] for key in wanted if key in spelling)
+        prices: dict[str, dict] = {}
+        if ids:
+            placeholders = ", ".join("?" * len(ids))
+            for r in _rows(
+                conn,
+                f"""
+                SELECT item_id,
+                       median(item_price / greatest(item_count, 1)) AS historical,
+                       median(item_price / greatest(item_count, 1)) FILTER (WHERE snapshot_id = ?) AS current,
+                       count(*) FILTER (WHERE snapshot_id = ?) AS active_count
+                FROM listings WHERE item_id IN ({placeholders})
+                GROUP BY item_id
+                """,
+                [latest_id, latest_id, *ids],
+            ):
+                prices[r["item_id"].lower()] = r
+
+        def posted_price(key: str) -> float | None:
+            priced = prices.get(key)
+            if priced is None:
+                return None
+            return priced["current"] if priced["current"] is not None else priced["historical"]
+
+        out: list[dict] = []
+        for item_id in craftable_ids():
+            priced = prices.get(item_id)
+            if priced is None:
+                continue  # never observed: nothing to compare the cost against
+            recipe = recipe_of(item_id) or {}
+            materials = recipe.get("materials", [])
+            cost = 0.0
+            priced_count = 0
+            for material in materials:
+                price = posted_price((material.get("id") or "").lower())
+                if price is not None and material.get("quantity"):
+                    cost += price * material["quantity"]
+                    priced_count += 1
+            if not cost or priced_count != len(materials):
+                continue
+            current_median = priced["current"]
+            historical = priced["historical"]
+            price = current_median if current_median is not None else historical
+            ratio = price / cost
+            if ratio < 1 and current_median is None:
+                continue  # below cost and nothing listed: neither crafting nor buying pays
+            row = {
+                "item_id": priced["item_id"],
+                "type": type_of(item_id),
+                "school": recipe.get("school"),
+                "craft_cost": round(cost, 2),
+                "materials_priced": priced_count,
+                "materials_total": len(materials),
+                "price": round(price, 2),
+                "price_basis": "current" if current_median is not None else "historical",
+                "listed_now": current_median is not None,
+                "current_median_unit_price": round(current_median) if current_median is not None else None,
+                "median_unit_price": round(historical),
+                "active_count": priced["active_count"],
+                "value_ratio": round(ratio, 2),
+            }
+            row.update(catalog_fields(item_id))
+            rar = rarity_of(item_id)
+            row["rarity"] = rar[1] if rar else None
+            row["rarity_rank"] = rar[0] if rar else 0
+            out.append(row)
+        return out
+
+    if cache is None or latest_id is None:
+        return compute()
+    return cache.get(latest_id, "best-value", compute)
+
+
 def crafting_value(
     conn: duckdb.DuckDBPyConnection,
     *,
     order: str = "value_ratio",
     direction: str = "desc",
+    cache: SnapshotCache | None = None,
 ) -> list[dict]:
     """Craftable items ranked by market price ÷ crafting cost.
 
@@ -1095,66 +1276,7 @@ def crafting_value(
     """
     latest = latest_snapshot(conn)
     latest_id = latest["id"] if latest else None
-    every: dict[str, list[float]] = {}
-    active: dict[str, list[float]] = {}
-    spelling: dict[str, str] = {}
-    for r in _rows(conn, "SELECT item_id, item_price, item_count, snapshot_id FROM listings"):
-        key = r["item_id"].lower()
-        unit = r["item_price"] / max(r["item_count"], 1)
-        every.setdefault(key, []).append(unit)
-        spelling.setdefault(key, r["item_id"])
-        if r["snapshot_id"] == latest_id:
-            active.setdefault(key, []).append(unit)
-
-    def posted_price(key: str) -> float | None:
-        cur = active.get(key)
-        if cur:
-            return median(cur)
-        hist = every.get(key)
-        return median(hist) if hist else None
-
-    out: list[dict] = []
-    for item_id in craftable_ids():
-        if item_id not in every:
-            continue  # never observed: nothing to compare the cost against
-        recipe = recipe_of(item_id) or {}
-        materials = recipe.get("materials", [])
-        cost = 0.0
-        priced = 0
-        for m in materials:
-            price = posted_price((m.get("id") or "").lower())
-            if price is not None and m.get("quantity"):
-                cost += price * m["quantity"]
-                priced += 1
-        if not cost or priced != len(materials):
-            continue
-        current_median = median(active[item_id]) if active.get(item_id) else None
-        historical = median(every[item_id])
-        price = current_median if current_median is not None else historical
-        ratio = price / cost
-        if ratio < 1 and current_median is None:
-            continue  # below cost and nothing listed: neither crafting nor buying pays
-        row = {
-            "item_id": spelling.get(item_id, item_id),
-            "type": type_of(item_id),
-            "school": recipe.get("school"),
-            "craft_cost": round(cost, 2),
-            "materials_priced": priced,
-            "materials_total": len(materials),
-            "price": round(price, 2),
-            "price_basis": "current" if current_median is not None else "historical",
-            "listed_now": current_median is not None,
-            "current_median_unit_price": round(current_median) if current_median is not None else None,
-            "median_unit_price": round(historical),
-            "active_count": len(active.get(item_id, [])),
-            "value_ratio": round(ratio, 2),
-        }
-        row.update(catalog_fields(item_id))
-        rar = rarity_of(item_id)
-        row["rarity"] = rar[1] if rar else None
-        row["rarity_rank"] = rar[0] if rar else 0
-        out.append(row)
-
+    out = list(_crafting_value_rows(conn, latest_id, cache))
     col = _CRAFT_VALUE_SORTS.get(order, "value_ratio")
     if col in ("item_id", "type"):
         key = lambda d: d.get(col) or ""
