@@ -270,3 +270,21 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job and the web server, move `market.db` (and its
   `market.db.wal` sidecar, if present) aside, and run `fetch --store` again.
+
+## Performance
+
+- Every read view is a pure function of the stored snapshots, and the snapshots
+  only change when one is appended. The server therefore memoizes the expensive
+  parts of the listings, best-sellers and best-value views in a
+  `store.SnapshotCache` keyed by the latest snapshot id: the first request after
+  a new snapshot computes them, and every later request — including a different
+  sort order of the same view — is served from memory until the next snapshot
+  arrives.
+- Best sellers aggregates one row per listing *transaction* in SQL instead of
+  pulling every listing of every snapshot into Python; best value reads only the
+  craftable items and their ingredients (resolving the catalog's lowercase keys
+  to the spelling the listings store) and aggregates its medians in DuckDB.
+  Both views rank and filter the cached rows per request, which is cheap.
+- Caching is per `WebApp` instance, so it never leaks between servers or tests,
+  and it is transparent: calling a view without a cache computes it as before.
+

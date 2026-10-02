@@ -693,3 +693,88 @@ def test_search_items_attaches_whatever_market_data_exists(tmp_path):
     assert store.search_items(conn, "") == []
     assert len(store.search_items(conn, "arrow", limit=3)) == 3
     conn.close()
+
+
+# --- per-snapshot view cache ------------------------------------------------
+
+
+def test_snapshot_cache_memoizes_per_snapshot():
+    cache = store.SnapshotCache()
+    computed = []
+
+    def compute():
+        computed.append(1)
+        return {"rows": [len(computed)]}
+
+    first = cache.get(1, "view", compute)
+    assert first == {"rows": [1]}
+    # a second lookup returns the stored object without recomputing
+    assert cache.get(1, "view", compute) is first
+    assert len(computed) == 1
+
+    # a different key at the same snapshot is computed independently
+    assert cache.get(1, "other", lambda: "x") == "x"
+    assert cache.get(1, "view", compute) is first
+
+    # a newer snapshot drops every older entry and recomputes
+    newer = cache.get(2, "view", compute)
+    assert newer == {"rows": [2]}
+    assert len(computed) == 2
+
+    # re-reading the old snapshot after moving on recomputes too: the cache
+    # tracks exactly one snapshot at a time
+    assert cache.get(1, "view", compute) == {"rows": [3]}
+    assert len(computed) == 3
+
+
+def test_snapshot_cache_put_warms_a_key():
+    cache = store.SnapshotCache()
+    cache.put(1, "view", [1, 2, 3])
+    assert cache.get(1, "view", lambda: (_ for _ in ()).throw(AssertionError("recomputed"))) == [1, 2, 3]
+    # clear drops it
+    cache.clear()
+    assert cache.get(1, "view", lambda: ["fresh"]) == ["fresh"]
+
+
+def test_read_views_follow_the_latest_snapshot_with_a_shared_cache(tmp_path):
+    """A cached view is served until a new snapshot lands, then refreshed."""
+    conn = store.open_store(tmp_path / "m.db")
+    cache = store.SnapshotCache()
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", price=100)], captured_at=1000.0)
+
+    listings = store.active_listings(conn, cache=cache)
+    assert [r["item_price"] for r in listings] == [100]
+    assert store.active_listings(conn, cache=cache) is listings  # memoized
+
+    sellers = store.best_sellers(conn, min_sales=0, cache=cache)
+    assert store.best_sellers(conn, min_sales=0, cache=cache) is not None
+    assert [r["item_id"] for r in sellers] == ["Axe_R_I"]
+
+    # a new snapshot invalidates every memoized view at once
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", price=300)], captured_at=2000.0)
+    assert [r["item_price"] for r in store.active_listings(conn, cache=cache)] == [300]
+    conn.close()
+
+
+def test_cached_views_match_uncached_views(tmp_path):
+    """Caching must only skip work, never change what a view returns."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Axe_R_I", item_type="Design", price=50),
+            mk(2, item_id="FireThrower2H_E004", item_type="Trait", price=6000),
+            mk(3, item_id="4ArcticFoxFur", item_type="Material", price=100),
+        ],
+        captured_at=1000.0,
+    )
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", item_type="Design", price=70)], captured_at=2000.0)
+
+    cache = store.SnapshotCache()
+    for kwargs in ({}, {"sort": "price", "direction": "desc"}, {"q": "axe"}, {"item_type": "Design"}):
+        assert store.active_listings(conn, cache=cache, **kwargs) == store.active_listings(conn, **kwargs)
+    for kwargs in ({}, {"min_sales": 0}, {"order": "item", "direction": "asc"}):
+        assert store.best_sellers(conn, cache=cache, **kwargs) == store.best_sellers(conn, **kwargs)
+    for kwargs in ({}, {"direction": "asc"}, {"order": "craft_cost"}):
+        assert store.crafting_value(conn, cache=cache, **kwargs) == store.crafting_value(conn, **kwargs)
+    conn.close()

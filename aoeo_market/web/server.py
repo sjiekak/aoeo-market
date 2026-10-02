@@ -138,6 +138,10 @@ class WebApp:
         # this process is the single owner of the file by design.  The lock
         # serializes snapshot writes between request threads.
         self._write_lock = threading.Lock()
+        # The expensive read views are pure functions of the stored snapshots,
+        # so one cache keyed by the latest snapshot id serves every request
+        # until a new snapshot arrives.
+        self._views = store.SnapshotCache()
 
     def handle(self, path: str, query: dict[str, list[str]] | None = None) -> tuple[int, str, bytes]:
         """Route one GET and return ``(status, content_type, body)``."""
@@ -163,6 +167,7 @@ class WebApp:
                         q=query.get("q", [None])[0] or None,
                         sort=query.get("sort", ["price"])[0],
                         direction=query.get("dir", ["asc"])[0],
+                        cache=self._views,
                     )
                 )
             if path == "/api/not-on-sale":
@@ -188,6 +193,7 @@ class WebApp:
                         order=query.get("order", ["median_time"])[0],
                         direction=query.get("dir", ["asc"])[0],
                         min_sales=self._int_param(query, "min_sales", 1),
+                        cache=self._views,
                     )
                 )
             if path == "/api/best-value":
@@ -196,6 +202,7 @@ class WebApp:
                         self._conn(),
                         order=query.get("order", ["value_ratio"])[0],
                         direction=query.get("dir", ["desc"])[0],
+                        cache=self._views,
                     )
                 )
             if path == "/api/recently-removed":
