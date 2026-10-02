@@ -349,6 +349,49 @@ def test_listings_expose_absolute_utc_expiry(tmp_path):
     assert row["expires_at"].endswith("Z")  # always UTC
 
 
+def test_read_api_never_returns_the_real_seller_id(tmp_path):
+    """Seller empire ids identify a player, so the read API overwrites the
+    field with a sentinel on the way out even though the store keeps the real
+    value for its joins."""
+    import json
+
+    from aoeo_market.web.server import REDACTED_SELLER_ID
+
+    seller = 987654321
+    db = tmp_path / "m.db"
+    conn = store.open_store(db)
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", item_type="Design", seller=seller)], captured_at=1000.0)
+    store.record_snapshot(conn, [mk(2, item_id="Sword_U_III", item_type="Trait", seller=seller)], captured_at=2000.0)
+    conn.close()
+    app = WebApp(str(db))
+
+    def sellers(payload) -> list:
+        """Every seller_empire_id in a nested API document."""
+        if isinstance(payload, dict):
+            return [v for k, v in payload.items() if k == "seller_empire_id"] + [s for v in payload.values() for s in sellers(v)]
+        if isinstance(payload, list):
+            return [s for v in payload for s in sellers(v)]
+        return []
+
+    # One route per read shape that carries listings: a flat list, a nested
+    # item history, and the recently-removed rows.
+    for route in ("/api/listings", "/api/item/Axe_R_I", "/api/recently-removed"):
+        status, _, body = app.handle(route)
+        assert status == 200, route
+        observed = sellers(json.loads(body))
+        assert observed, f"{route} no longer carries the redacted field"
+        assert set(observed) == {REDACTED_SELLER_ID}, route
+        assert str(seller).encode() not in body, route
+
+    # Only the API response is redacted: the store still carries the real id,
+    # so its joins and snapshot bookkeeping keep working.
+    conn = store.open_store(db)
+    try:
+        assert {row["seller_empire_id"] for row in store.active_listings(conn)} == {seller}
+    finally:
+        conn.close()
+
+
 def test_item_endpoint_and_404(tmp_path):
     app = app_for(tmp_path)
     status, _, body = app.handle("/api/item/Sword_U_III")

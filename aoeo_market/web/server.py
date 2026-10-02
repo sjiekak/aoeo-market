@@ -66,10 +66,35 @@ _JSON = "application/json; charset=utf-8"
 # The single write endpoint, served only by the write listener (--write-port).
 _WRITE_ENDPOINT = "/api/snapshot"
 
+# Seller empire ids are player-identifying, so the read API never exposes the
+# real value.  The store still selects it (the ingestion path and the internal
+# snapshot joins need it); it is overwritten with this sentinel in ``_json`` —
+# the last step before the payload is serialized.  A later change can drop the
+# field from the contract entirely; for now the shape stays stable.
+REDACTED_SELLER_ID = 0
+
 
 def _error_body(message: str) -> bytes:
     """The JSON body of an error response (handlers share the app's shape)."""
     return json.dumps({"error": message}).encode()
+
+
+def _redact_seller_ids(payload: object) -> None:
+    """Overwrite every ``seller_empire_id`` in *payload* with the sentinel.
+
+    Walks dicts and lists in place, so it works for a single row, a bare list
+    of rows, or a nested document (``/api/item/<id>`` returns current and
+    previous listings).  Mutating is safe because every read view builds fresh
+    dicts per request.
+    """
+    if isinstance(payload, dict):
+        if "seller_empire_id" in payload:
+            payload["seller_empire_id"] = REDACTED_SELLER_ID
+        for value in payload.values():
+            _redact_seller_ids(value)
+    elif isinstance(payload, list):
+        for value in payload:
+            _redact_seller_ids(value)
 
 
 _LISTING_FIELDS = (
@@ -302,6 +327,9 @@ class WebApp:
         return timedelta(seconds=seconds)
 
     def _json(self, payload) -> tuple[int, str, bytes]:
+        # Redact at the very last minute: the store's queries keep the real id
+        # for joins and ordering, the client never sees it.
+        _redact_seller_ids(payload)
         return 200, _JSON, json.dumps(payload).encode()
 
     def _error(self, status: int, message: str) -> tuple[int, str, bytes]:
