@@ -647,3 +647,29 @@ def test_empty_database_responses(tmp_path):
     assert body == b"[]"
     _, _, body = app.handle("/api/recently-removed")
     assert body == b"[]"
+
+
+def test_snapshot_write_warms_the_read_views(tmp_path):
+    """The POST computes the views, so the next read is served from the cache."""
+    import json
+
+    app = WebApp(str(tmp_path / "m.db"))
+
+    def post(listings, at):
+        body = json.dumps({"listings": [row.to_dict() for row in listings], "captured_at": at}).encode()
+        assert app.handle_post("/api/snapshot", body)[0] == 201
+
+    post([mk(9, item_id="Old_U_I", price=10)], 1000.0)
+    post([mk(9, item_id="Old_U_I", price=10), mk(1, item_id="Sold_U_I", price=120)], 4600.0)
+    post([mk(9, item_id="Old_U_I", price=10)], 8200.0)
+
+    # Wipe the listings behind the cache's back: a read that recomputed would
+    # come back empty, so a populated answer proves the write warmed the cache.
+    conn = store.open_store(tmp_path / "m.db")
+    conn.execute("DELETE FROM listings")
+    conn.close()
+
+    _, _, body = app.handle("/api/best-sellers")
+    assert [r["item_id"] for r in json.loads(body)] == ["Sold_U_I"]
+    _, _, body = app.handle("/api/listings")
+    assert [r["item_id"] for r in json.loads(body)] == ["Old_U_I"]

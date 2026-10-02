@@ -693,3 +693,71 @@ def test_search_items_attaches_whatever_market_data_exists(tmp_path):
     assert store.search_items(conn, "") == []
     assert len(store.search_items(conn, "arrow", limit=3)) == 3
     conn.close()
+
+
+# --- per-snapshot view cache ------------------------------------------------
+
+
+def test_snapshot_cache_memoizes_per_snapshot():
+    cache = store.SnapshotCache()
+    computed = []
+
+    def compute():
+        computed.append(1)
+        return {"rows": [len(computed)]}
+
+    first = cache.get(1, "view", compute)
+    assert first == {"rows": [1]}
+    assert cache.get(1, "view", compute) is first  # served from the cache
+    assert len(computed) == 1
+    assert cache.get(1, "other", lambda: "x") == "x"  # a different key computes
+
+    # a newer snapshot drops every older entry
+    assert cache.get(2, "view", compute) == {"rows": [2]}
+    assert cache.get(1, "view", compute) == {"rows": [3]}  # only one snapshot is held
+    assert len(computed) == 3
+
+
+def test_warm_views_fills_the_cache(tmp_path):
+    """``warm_views`` computes the three views once, per snapshot."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Axe_R_I", price=100, expiry=200_000)], captured_at=1000.0)
+    store.record_snapshot(conn, [], captured_at=4600.0)  # the listing vanishes
+    cache = store.SnapshotCache()
+    store.warm_views(conn, cache)
+
+    # the warmed listings view is the cached object
+    listings = store.active_listings(conn, cache=cache)
+    assert store.active_listings(conn, cache=cache) is listings
+
+    # the warmed best-sellers view is served even after the data changes
+    before = store.best_sellers(conn, min_sales=0, cache=cache)
+    assert [r["item_id"] for r in before] == ["Axe_R_I"]
+    conn.execute("DELETE FROM listings")
+    assert store.best_sellers(conn, min_sales=0, cache=cache) == before
+
+    # a new snapshot invalidates the cache and the view reflects it
+    store.record_snapshot(conn, [mk(2, item_id="Sword_U_III", price=10)], captured_at=8200.0)
+    assert [r["item_id"] for r in store.best_sellers(conn, min_sales=0, cache=cache)] == ["Sword_U_III"]
+    conn.close()
+
+
+def test_items_not_on_sale_keeps_per_group_stats(tmp_path):
+    """The view still reports one row per historical (item, type, level) group:
+    that group's min/max/count, the item's median, and its identity from the
+    last snapshot it appeared in."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Gone_U_I", item_type="Trait", level=1, price=100)], captured_at=1000.0)
+    store.record_snapshot(conn, [mk(2, item_id="Gone_U_I", item_type="Trait", level=2, price=300)], captured_at=2000.0)
+    store.record_snapshot(conn, [], captured_at=3000.0)
+
+    rows = store.items_not_on_sale(conn, order="item")
+    assert len(rows) == 2  # one per historical level
+    assert all(r["item_level"] == 2 for r in rows)  # identity from the last sighting
+    assert all(r["last_seen"] == 2000.0 for r in rows)
+    assert all(r["median_unit_price"] == 200 for r in rows)  # median over the item's listings
+    assert sorted((r["times_listed"], r["min_unit_price"], r["max_unit_price"]) for r in rows) == [
+        (1, 100.0, 100.0),
+        (1, 300.0, 300.0),
+    ]
+    conn.close()

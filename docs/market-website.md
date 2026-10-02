@@ -270,3 +270,26 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job and the web server, move `market.db` (and its
   `market.db.wal` sidecar, if present) aside, and run `fetch --store` again.
+
+## Performance
+
+- **Views are memoized per snapshot.** Listings, best sellers and best value
+  are pure functions of the stored snapshots, so the server keeps their results
+  in a `store.SnapshotCache` keyed by the latest snapshot id: the first request
+  after a new snapshot computes them, and every later request — including a
+  different sort order of the same view — is served from memory.
+- **The write warms the cache.** `POST /api/snapshot` computes the three views
+  for the snapshot it just appended, before it answers. The expensive history
+  scans are therefore paid once by the hourly writer, and no reader pays them:
+  the first read after a snapshot drops from ~463 ms to ~17 ms for best sellers
+  and ~253 ms to ~11 ms for best value, at the cost of the write itself taking
+  ~740 ms instead of ~46 ms. Best sellers and best value cache one
+  parameter-independent result each; listings caches the default view the
+  dashboard asks for. A plain call without a cache computes as before.
+- **Not-on-sale is one query.** The view used to run two further queries per
+  item to collect its prices and its last sighting. It now aggregates the
+  per-unit median, the per (item, type, level) min/max and count, and the last
+  snapshot in a single query — ~1.2 s to ~17 ms on the reference database. The
+  rows are unchanged, though the rows of an item listed at more than one type
+  or level can come back in a different order among themselves.
+
