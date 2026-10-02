@@ -288,6 +288,14 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   (resolving the catalog's lowercase keys to the spelling the listings store)
   and aggregates its medians in DuckDB. Both views rank and filter the cached
   rows per request, which is cheap.
+- **Not-on-sale is one query.** The view used to run two further queries per item
+  to collect its prices and its last sighting, which dominated it once the
+  history was long; it now aggregates the per-unit median, the per (item, type,
+  level) min/max and count, and the last snapshot in a single query (~1.3 s to
+  ~20 ms on the reference database). The rows are unchanged, though the rows of
+  an item listed at more than one type or level can come back in a different
+  order among themselves, since that order was never defined. Unlike the three
+  cached views, this one is recomputed on every request.
 - **One connection for the process.** The server opens the DuckDB file once
   (lazily, on the first request) and reuses it, instead of opening a
   read-write connection and re-running the schema statements on every request.
