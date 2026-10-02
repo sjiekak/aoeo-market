@@ -831,52 +831,64 @@ def items_not_on_sale(
     Each row carries the item's historical price stats (per unit, so stack
     sizes stay comparable) so traders can see what is currently unavailable
     and what it traded for.  ``order`` is one of :data:`_NOT_SALE_SORTS`.
+
+    Everything is aggregated in one query — the per-unit median, the per
+    (item, type, level) min/max and count, and the snapshot the item was last
+    seen in.  The earlier implementation ran two more queries per item to
+    collect those, which dominated the view once the history was long.
     """
     latest = latest_snapshot(conn)
     if latest is None:
         return []
-    active_ids = {r["item_id"] for r in _rows(conn, "SELECT DISTINCT item_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
-
-    out: list[dict] = []
-    for r in _rows(
+    rows = _rows(
         conn,
         """
-        SELECT item_id, item_type, item_level,
-               COUNT(*) AS times_listed, MIN(item_price * 1.0 / item_count) AS min_price, MAX(item_price * 1.0 / item_count) AS max_price
-        FROM listings
-        GROUP BY item_id, item_type, item_level
-        """,
-    ):
-        if r["item_id"] in active_ids:
-            continue
-        prices = [
-            p["item_price"] / max(p["item_count"], 1)
-            for p in _rows(conn, "SELECT item_price, item_count FROM listings WHERE item_id = ? ORDER BY item_price", [r["item_id"]])
-        ]
-        last = _row(
-            conn,
-            """
-            SELECT s.captured_at AS last_seen, l.item_type AS t, l.item_level AS lvl
+        WITH last_seen AS (
+            SELECT l.item_id,
+                   arg_max(s.captured_at, s.id) AS last_seen,
+                   arg_max(l.item_type, s.id) AS item_type,
+                   arg_max(l.item_level, s.id) AS item_level
             FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
-            WHERE l.item_id = ? ORDER BY s.id DESC LIMIT 1
-            """,
-            [r["item_id"]],
+            GROUP BY l.item_id
+        ),
+        item_median AS (
+            SELECT item_id, median(item_price / greatest(item_count, 1)) AS median_price
+            FROM listings GROUP BY item_id
+        ),
+        groups AS (
+            SELECT item_id, item_type, item_level,
+                   count(*) AS times_listed,
+                   min(item_price * 1.0 / item_count) AS min_price,
+                   max(item_price * 1.0 / item_count) AS max_price
+            FROM listings GROUP BY item_id, item_type, item_level
         )
+        SELECT g.item_id, ls.item_type, ls.item_level, g.times_listed, g.min_price, g.max_price,
+               m.median_price, ls.last_seen
+        FROM groups g
+        JOIN last_seen ls ON ls.item_id = g.item_id
+        JOIN item_median m ON m.item_id = g.item_id
+        WHERE g.item_id NOT IN (SELECT DISTINCT item_id FROM listings WHERE snapshot_id = ?)
+        """,
+        [latest["id"]],
+    )
+
+    out: list[dict] = []
+    for r in rows:
         rar = rarity_of(r["item_id"])
         out.append(
             {
                 "item_id": r["item_id"],
                 "name": name_of(r["item_id"]),
                 **icon_fields(r["item_id"]),
-                "item_type": last["t"] if last else r["item_type"],
-                "item_level": last["lvl"] if last else r["item_level"],
+                "item_type": r["item_type"],
+                "item_level": r["item_level"],
                 "rarity": rar[1] if rar else None,
                 "rarity_rank": rar[0] if rar else 0,
-                "median_unit_price": median(prices),
+                "median_unit_price": r["median_price"],
                 "min_unit_price": r["min_price"],
                 "max_unit_price": r["max_price"],
                 "times_listed": r["times_listed"],
-                "last_seen": last["last_seen"] if last else None,
+                "last_seen": r["last_seen"],
             }
         )
 

@@ -778,3 +778,24 @@ def test_cached_views_match_uncached_views(tmp_path):
     for kwargs in ({}, {"direction": "asc"}, {"order": "craft_cost"}):
         assert store.crafting_value(conn, cache=cache, **kwargs) == store.crafting_value(conn, **kwargs)
     conn.close()
+
+
+def test_items_not_on_sale_keeps_per_group_stats(tmp_path):
+    """The view still reports one row per historical (item, type, level) group:
+    that group's min/max/count, the item's median, and its identity from the
+    last snapshot it appeared in."""
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(conn, [mk(1, item_id="Gone_U_I", item_type="Trait", level=1, price=100)], captured_at=1000.0)
+    store.record_snapshot(conn, [mk(2, item_id="Gone_U_I", item_type="Trait", level=2, price=300)], captured_at=2000.0)
+    store.record_snapshot(conn, [], captured_at=3000.0)
+
+    rows = store.items_not_on_sale(conn, order="item")
+    assert len(rows) == 2  # one per historical level
+    assert all(r["item_level"] == 2 for r in rows)  # identity from the last sighting
+    assert all(r["last_seen"] == 2000.0 for r in rows)
+    assert all(r["median_unit_price"] == 200 for r in rows)  # median over the item's listings
+    assert sorted((r["times_listed"], r["min_unit_price"], r["max_unit_price"]) for r in rows) == [
+        (1, 100.0, 100.0),
+        (1, 300.0, 300.0),
+    ]
+    conn.close()
