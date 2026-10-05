@@ -444,6 +444,31 @@ def test_best_sellers_endpoint(tmp_path):
     assert status == 400
 
 
+def test_best_sellers_floor_is_the_dashboards_request(tmp_path):
+    """`min_sales=5` is the panel's request, not an API default.
+
+    One fully observed sale is enough for a row to come back with no query
+    params, and the dashboard is what asks for the five-sale floor.
+    """
+    import json
+
+    db = tmp_path / "m.db"
+    conn = store.open_store(db)
+    # the warm-up snapshot keeps the thin item out of the left-censored first one
+    store.record_snapshot(conn, [mk(100, item_id="Warm_U_I", price=10, expiry=200_000)], captured_at=0.0)
+    store.record_snapshot(conn, [mk(1, item_id="Thin_U_I", price=10, expiry=200_000)], captured_at=2000.0)
+    store.record_snapshot(conn, [], captured_at=3000.0)  # one fully observed sale
+    conn.close()
+
+    app = WebApp(str(db))
+    _, _, body = app.handle("/api/best-sellers")
+    assert [r["item_id"] for r in json.loads(body)] == ["Thin_U_I"]  # the API default is 1
+    _, _, body = app.handle("/api/best-sellers", {"min_sales": ["5"]})
+    assert json.loads(body) == []  # …and the dashboard's floor hides it
+    _, _, js = app.handle("/static/app.js")
+    assert b"/api/best-sellers?min_sales=5" in js  # the panel sends exactly that
+
+
 def test_search_endpoint(tmp_path):
     import json
 

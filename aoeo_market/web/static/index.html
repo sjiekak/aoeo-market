@@ -139,6 +139,10 @@
 						<h2>Listings by rarity</h2>
 						<canvas id="chart-rarity"></canvas>
 					</div>
+					<div class="card chart-card">
+						<h2>Fastest sellers (median time-to-sale)</h2>
+						<canvas id="chart-best-sellers"></canvas>
+					</div>
 				</div>
 				<div class="card">
 					<h2>
@@ -193,7 +197,8 @@
 				</div>
 			</section>
 
-			<!-- Best sellers -->
+			<!-- Best sellers: the table only — the ten fastest are charted on the Overview
+			     tab, from the same /api/best-sellers response. -->
 			<section id="tab-best-sellers" hidden>
 				<p class="muted">
 					Time-to-sale: from a listing's first appearance in the data to its
@@ -202,62 +207,56 @@
 					first. Click a column header to sort: min first (↑), then max (↓),
 					then unsorted.
 				</p>
-				<div class="grid-2">
-					<div class="card chart-card">
-						<h2>Fastest sellers (median time-to-sale)</h2>
-						<canvas id="chart-best-sellers"></canvas>
-					</div>
-					<div class="card">
-						<h2>
-							All items with observed sales
-							<span class="muted">(median of n timed sales)</span>
-						</h2>
-						<table>
-							<thead>
-								<tr>
-									<th><button type="button" data-order="item">Item</button></th>
-									<th><button type="button" data-order="type">Type</button></th>
-									<th class="num">
-										<button type="button" data-order="level">Lvl</button>
-									</th>
-									<th>
-										<button type="button" data-order="rarity">Rarity</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="median_time">
-											Median time-to-sale
-										</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="min_time">Min</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="max_time">Max</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="sales">Sales</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="expired">Expired</button>
-									</th>
-									<th class="num">
-										<button type="button" data-order="active_count">
-											On sale now
-										</button>
-									</th>
-									<th class="num">
-										<button
-											type="button"
-											data-order="current_median_unit_price"
-										>
-											Current median/unit
-										</button>
-									</th>
-								</tr>
-							</thead>
-							<tbody id="best-body"></tbody>
-						</table>
-					</div>
+				<div class="card">
+					<h2>
+						All items with observed sales
+						<span class="muted">(median of n timed sales)</span>
+					</h2>
+					<table>
+						<thead>
+							<tr>
+								<th><button type="button" data-order="item">Item</button></th>
+								<th><button type="button" data-order="type">Type</button></th>
+								<th class="num">
+									<button type="button" data-order="level">Lvl</button>
+								</th>
+								<th>
+									<button type="button" data-order="rarity">Rarity</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="median_time">
+										Median time-to-sale
+									</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="min_time">Min</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="max_time">Max</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="sales">Sales</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="expired">Expired</button>
+								</th>
+								<th class="num">
+									<button type="button" data-order="active_count">
+										On sale now
+									</button>
+								</th>
+								<th class="num">
+									<button
+										type="button"
+										data-order="current_median_unit_price"
+									>
+										Current median/unit
+									</button>
+								</th>
+							</tr>
+						</thead>
+						<tbody id="best-body"></tbody>
+					</table>
 				</div>
 			</section>
 
