@@ -318,7 +318,9 @@ function fitSupplyY(chart) {
 }
 
 async function loadOverview() {
-	const o = await api("/api/overview");
+	// The fastest-sellers card belongs to this tab, so its rows are fetched
+	// here; the Best sellers tab reads the same memoized response.
+	const [o, sellers] = await Promise.all([api("/api/overview"), api(BEST_SELLERS_URL)]);
 	$("#empty-banner").hidden = o.latest !== null;
 	$("#kpi-listings").textContent = fmtInt(o.active_listings);
 	$("#kpi-items").textContent = fmtInt(o.distinct_items);
@@ -436,6 +438,8 @@ async function loadOverview() {
 			scales: { y: { beginAtZero: true } },
 		},
 	});
+
+	renderBestSellersChart(sellers);
 
 	$("#movers").innerHTML =
 		o.top_movers
@@ -583,9 +587,16 @@ const BEST_SELLER_SORTS = {
 
 let bestSellerCache = [];
 
-// The chart always shows the ten fastest, whatever the table is sorted by.
-function renderBestSellersChart() {
-	const top = sortedRows(bestSellerCache, "median_time", "asc", BEST_SELLER_SORTS).slice(0, 10).reverse(); // fastest at the top
+// The panel — not the API — sets the floor: too few observed sales and a
+// median time-to-sale says more about the sample than about the item. Both
+// this tab's table and the Overview tab's chart read this one response.
+const BEST_SELLERS_URL = "/api/best-sellers?min_sales=5";
+
+// The Overview tab's fastest-sellers card: the ten fastest, whatever the table
+// is sorted by. The rows come from the Overview loader (the same memoized
+// response the table below uses).
+function renderBestSellersChart(rows) {
+	const top = sortedRows(rows, "median_time", "asc", BEST_SELLER_SORTS).slice(0, 10);
 	makeChart("#chart-best-sellers", {
 		type: "bar",
 		data: {
@@ -642,11 +653,11 @@ function renderBestSellers() {
 		'<tr><td colspan="11" class="muted">no fully observed sales yet — this view fills in as more data is collected</td></tr>';
 }
 
-// One request feeds both the chart and the table, and a column click re-sorts
-// the cached rows — the API used to be re-queried for every header click.
+// A column click re-sorts the cached rows — the API used to be re-queried for
+// every header click. The response is memoized per URL, so an already-loaded
+// Overview tab costs no second request.
 async function loadBestSellersTab() {
-	bestSellerCache = await api("/api/best-sellers");
-	renderBestSellersChart();
+	bestSellerCache = await api(BEST_SELLERS_URL);
 	renderBestSellers();
 }
 

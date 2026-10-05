@@ -128,9 +128,9 @@ item page loads only that item.
 | Tab | What it shows |
 |---|---|
 | **Search** | The landing view: one box that matches a fragment of an item id or display name against the curated catalog — so an item nobody is selling still turns up, marked *not listed* — and lists the matches with their current median unit price (or the historical median when unlisted) and active-listing count. It issues no request until the form is submitted, so arriving at the dashboard costs no API traffic. |
-| **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, and the biggest median-price movers between the last two snapshots. |
+| **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, the fastest sellers by median time-to-sale, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
-| **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell. Orderable by median/min/max time, sales count, rarity, current price and more; a bar chart shows the ten fastest. |
+| **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell, omitting items with too few observed sales to rank. Orderable by median/min/max time, sales count, rarity, current price and more. The fastest are charted on the **Overview** tab. |
 | **Best value** | Craftable items ranked by **market price ÷ crafting cost**: above 1× an item sells for more than its ingredients cost — buy the materials, craft it, sell it — and below 1× the item itself is the cheaper way to get it. A **View** selector flips between best and worst (equivalently, the ratio's direction), and an item with no current listing is priced off its historical median and marked *not listed*. Every row is actionable: an item selling below its crafting cost is only listed while it has an active listing, since otherwise there is nothing to buy and nothing worth crafting. Orderable by item, type, rarity, cost, price and ratio. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
@@ -261,7 +261,10 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   snapshot are left-censored (their true listing time is unknown), so they
   count toward `sales` but not toward the time stats — the view needs a few
   hourly snapshots before it fills in, and times are accurate to within one
-  poll interval.
+  poll interval. The best-sellers panel asks the API for a sales floor
+  (`min_sales=5`): below it a median time-to-sale says more about the sample
+  than about the item. The endpoint's default is unchanged, leaving the floor
+  to the caller.
 - **Price per unit**: the listing's `ItemPrice` is the *total for the whole
   stack* (`ItemCount`), and bulk discounts exist, so every analytics view
   (price distributions, item history, not-on-sale stats, movers)
@@ -331,8 +334,9 @@ than asking the API to re-sort on every column click:
   columns, nulls last in ascending order), so it costs no round trip — best
   sellers used to issue a fresh request for every header click and could issue
   two when the tab opened.
-- The best-sellers chart is derived from the cached rows too, so the table sort
-  and the "ten fastest" chart never disagree or cost a second request.
+- The fastest-sellers chart on the Overview tab is derived from the same
+  memoized best-sellers response as the table, so the two never disagree and
+  opening both tabs costs one request.
 - The listings filter box is debounced by 120 ms: without it each keystroke
   rebuilt the whole table of ~1,800 rows.
 - The sort key is computed once per row instead of once per comparison.
