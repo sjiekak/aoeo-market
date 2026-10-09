@@ -868,3 +868,162 @@ def test_http_gzip_and_etag_revalidation(tmp_path):
         write.server_close()
         thread.join()
         app.close()
+
+
+# --- the read window (`--since` / `--start-date`) ---------------------------
+
+
+def windowed_app(tmp_path, since):
+    """Three hourly snapshots for the start-date tests.
+
+    t=1000: Axe (tx1) + Arctic Fox (tx2)   <- hidden by a 1500 cutoff
+    t=2000: Arctic Fox (tx2)
+    t=3000: Sword (tx3)
+    """
+    db = tmp_path / "window.db"
+    conn = store.open_store(db)
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Axe_R_I", item_type="Design", price=100, expiry=200_000),
+            mk(2, item_id="4ArcticFoxFur", item_type="Material", price=1000, expiry=200_000),
+        ],
+        captured_at=1000.0,
+    )
+    store.record_snapshot(conn, [mk(2, item_id="4ArcticFoxFur", item_type="Material", price=1000, expiry=200_000)], captured_at=2000.0)
+    store.record_snapshot(conn, [mk(3, item_id="Sword_U_III", item_type="Trait", price=500, expiry=200_000)], captured_at=3000.0)
+    conn.close()
+    return WebApp(str(db), since=since)
+
+
+def test_start_cutoff_restricts_every_read_endpoint(tmp_path):
+    """`--since` hides a snapshot from the whole read API, not just one view."""
+    import json
+
+    app = windowed_app(tmp_path, since=1500.0)
+
+    assert app.data_validator() == '"snap:3"'
+    assert json.loads(app.handle("/readyz")[2])["snapshots"] == 2
+
+    overview = json.loads(app.handle("/api/overview")[2])
+    assert overview["snapshot_count"] == 2
+    assert overview["active_listings"] == 1
+    assert [s["t"] for s in overview["supply_history"]] == [2000.0, 3000.0]
+
+    assert [r["item_id"] for r in json.loads(app.handle("/api/listings")[2])] == ["Sword_U_III"]
+    assert app.handle("/api/item/Axe_R_I")[0] == 404  # only seen before the cutoff
+    history = json.loads(app.handle("/api/item/4ArcticFoxFur")[2])
+    assert [s["t"] for s in history["series"]] == [2000.0]
+    assert [p["transaction_id"] for p in history["previous"]] == [2]
+    assert [r["item_id"] for r in json.loads(app.handle("/api/not-on-sale")[2])] == ["4ArcticFoxFur"]
+    assert [r["item_id"] for r in json.loads(app.handle("/api/recently-removed")[2])] == ["4ArcticFoxFur"]
+    assert "Axe_R_I" not in app.handle("/api/best-sellers", {"min_sales": ["0"]})[2].decode()
+    assert json.loads(app.handle("/api/search", {"q": ["arcticfox"]})[2])[0]["median_unit_price"] == 1000
+
+    # The window is a start-up argument, never a request parameter: an API
+    # caller cannot widen it (or narrow it) from the query string.
+    assert app.handle("/api/listings", {"since": ["0"]})[2] == app.handle("/api/listings")[2]
+    assert app.handle("/api/item/Axe_R_I", {"since": ["0"]})[0] == 404
+    assert json.loads(app.handle("/api/overview", {"since": ["0"]})[2])["snapshot_count"] == 2
+
+
+def test_start_cutoff_leaves_ingestion_alone(tmp_path):
+    """The cutoff is read-side only: snapshots keep being appended to the file."""
+    import json
+
+    app = windowed_app(tmp_path, since=2500.0)  # only t=3000 is inside the window
+    assert json.loads(app.handle("/api/overview")[2])["snapshot_count"] == 1
+
+    payload = json.dumps({"listings": [mk(9, item_id="Sword_U_III", price=900, expiry=200_000).to_dict()], "captured_at": 4000.0}).encode()
+    assert app.handle_post("/api/snapshot", payload)[0] == 201
+
+    # The new snapshot is inside the window, so every read follows it.
+    assert app.data_validator() == '"snap:4"'
+    assert [r["item_price"] for r in json.loads(app.handle("/api/listings")[2])] == [900]
+    assert json.loads(app.handle("/readyz")[2])["snapshots"] == 2
+
+
+def test_parse_start_date():
+    from datetime import UTC, datetime
+
+    from aoeo_market.web.server import parse_start_date
+
+    midnight = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+    assert parse_start_date("2026-01-01") == midnight  # a bare date is midnight UTC
+    assert parse_start_date(" 2026-01-01 ") == midnight  # surrounding space is ignored
+    assert parse_start_date("2026-01-01T06:30:00Z") == midnight + 6.5 * 3600
+    # a value without an offset is read as UTC, like every stored timestamp
+    assert parse_start_date("2026-01-01T06:30:00") == parse_start_date("2026-01-01T06:30:00Z")
+
+    import pytest
+
+    for bad in ("", "yesterday", "2026-13-01", "01/02/2026", "2026"):
+        with pytest.raises(ValueError):
+            parse_start_date(bad)
+
+
+def test_start_date_argument_reaches_the_app(tmp_path, monkeypatch, capsys):
+    """`--since` is parsed by the CLI and handed to the one WebApp it serves."""
+    from aoeo_market.web import server as web_server
+
+    served = {}
+
+    class FakeServer:
+        def __init__(self, *, blocking):
+            self._blocking = blocking
+
+        def serve_forever(self):
+            if self._blocking:  # the read listener: hand control back to main()
+                raise KeyboardInterrupt
+
+        def shutdown(self):
+            pass
+
+        def server_close(self):
+            pass
+
+    def fake_create_servers(app, host, port, write_host, write_port):
+        served["app"] = app
+        return FakeServer(blocking=True), FakeServer(blocking=False)
+
+    monkeypatch.setattr(web_server, "create_servers", fake_create_servers)
+    db = tmp_path / "m.db"
+    seed(db)
+
+    assert web_server.main(["--db", str(db), "--since", "2026-01-01"]) == 0
+    assert served["app"].since == web_server.parse_start_date("2026-01-01")
+    assert "snapshots since 2026-01-01" in capsys.readouterr().out
+
+    # the long spelling is an alias for the same argument
+    assert web_server.main(["--db", str(db), "--start-date", "2026-01-01T06:30:00Z"]) == 0
+    assert served["app"].since == web_server.parse_start_date("2026-01-01T06:30:00Z")
+
+    # a value that is not a date is a usage error, before any database is opened
+    import pytest
+
+    with pytest.raises(SystemExit) as excinfo:
+        web_server.main(["--db", str(db), "--since", "the day before yesterday"])
+    assert excinfo.value.code == 2
+
+
+def test_start_cutoff_can_hide_a_crafting_cost(tmp_path):
+    """Best value prices ingredients inside the window: one the cutoff hides
+    counts as never observed, so the recipe can no longer be costed."""
+    import json
+
+    db = tmp_path / "value-window.db"
+    conn = store.open_store(db)
+    materials = [
+        mk(1, item_id="4ArcticFoxFur", item_type="Material", price=100),
+        mk(2, item_id="4IlluminatedCodex", item_type="Material", price=50),
+        mk(3, item_id="4PhilosopherStone", item_type="Material", price=25),
+    ]
+    store.record_snapshot(conn, [*materials, mk(4, item_id="FireThrower2H_E006", item_type="Trait", price=5000)], captured_at=1000.0)
+    # the ingredients are only ever listed in the snapshot before the cutoff
+    store.record_snapshot(conn, [mk(5, item_id="FireThrower2H_E006", item_type="Trait", price=5000)], captured_at=2000.0)
+    conn.close()
+
+    rows = json.loads(WebApp(str(db)).handle("/api/best-value")[2])
+    assert [r["item_id"] for r in rows] == ["FireThrower2H_E006"]
+    assert rows[0]["craft_cost"] == 2300  # 18*100 + 8*50 + 4*25
+    assert json.loads(WebApp(str(db), since=2500.0).handle("/api/best-value")[2]) == []  # nothing to cost it with

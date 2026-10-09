@@ -68,6 +68,31 @@ uv run python -m aoeo_market.web --db market.db --port 8000 --write-port 8001
 uv run python -m aoeo_market.cli fetch --local-ip <ip> --store http://127.0.0.1:8001 --quiet
 ```
 
+### Serving only recent history
+
+`--since DATE` (`--start-date` is the same option) narrows the whole process to
+snapshots captured at or after DATE, trimming a long history to the part the
+dashboard should show. DATE is a calendar date read as midnight UTC
+(`2026-09-01`) or a full ISO-8601 instant (`2026-09-01T12:30:00Z`); a value
+without an offset is read as UTC, like every other timestamp in the database.
+
+```bash
+# serve only what was captured from 2026-09-01 onwards
+uv run python -m aoeo_market.web --db market.db --since 2026-09-01
+```
+
+The cutoff is a **start-up argument and not an API parameter**: no request can
+widen or narrow the window — the operator chooses it when launching the
+process. Nothing is deleted or refused: ingestion keeps appending every
+snapshot, so a restart without `--since` serves the old history again, and
+`--since` only decides what a read may see. Every read view honours it — the
+latest snapshot, the snapshot count and supply history, the price
+distribution, the per-item history with its crafting/dismantling prices, the
+"not on sale" aggregates and "recently removed" frames, and time-to-sale (where
+the first *visible* snapshot is the left-censoring boundary). `/readyz` reports
+the number of *visible* snapshots, and starting with a date that hides
+everything prints a warning instead of serving a silently empty dashboard.
+
 ### Cron (hourly snapshots)
 
 Edit your crontab (`crontab -e`) and add one line, substituting the real paths:
@@ -194,6 +219,10 @@ with a 404 that says where it lives.
 
 The API is the stable surface of the website; the frontend is a consumer of it.
 
+The read window (`--since`, see [Serving only recent history](#serving-only-recent-history))
+is fixed when the process starts and has no request parameter: every route above
+answers within the operator's window, whatever a caller asks for.
+
 Every payload is typed in the OpenAPI reference. The schemas compose two
 shared models: a `Listing` is a `StockItem` (id, type, level, count, price,
 seed) listed by a seller, and `ItemSummary` is the curated identity (name,
@@ -292,18 +321,22 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - The database only grows: `fetch --store` never deletes. To start over,
   stop the cron job and the web server, move `market.db` (and its
   `market.db.wal` sidecar, if present) aside, and run `fetch --store` again.
+  `--since` does not change that — it hides old snapshots from the read views
+  without touching a row, so the same file can serve different windows on
+  different restarts.
 
 ## Performance
 
 - **Views are memoized per snapshot.** Every read view is a pure function of
   the stored snapshots, and the snapshots only change when one is appended. The
   server therefore keeps the expensive parts of the listings, best-sellers and
-  best-value views in a `store.SnapshotCache` keyed by the latest snapshot id:
-  the first request after a new snapshot computes them, and every later request
-  — including a different sort order of the same view — is served from memory
-  until the next snapshot arrives. Caching is per `WebApp` instance, so it never
-  leaks between servers or tests, and it is transparent: calling a view without
-  a cache computes it as before.
+  best-value views in a `store.SnapshotCache` keyed by the latest snapshot id
+  (the latest *visible* one under `--since`, which is why one process serves
+  exactly one window): the first request after a new snapshot computes them, and
+  every later request — including a different sort order of the same view — is
+  served from memory until the next snapshot arrives. Caching is per `WebApp`
+  instance, so it never leaks between servers or tests, and it is transparent:
+  calling a view without a cache computes it as before.
 - **Best sellers and best value aggregate in SQL.** Best sellers groups one row
   per listing *transaction* instead of pulling every listing of every snapshot
   into Python; best value reads only the craftable items and their ingredients

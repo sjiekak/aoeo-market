@@ -799,3 +799,83 @@ def test_items_not_on_sale_keeps_per_group_stats(tmp_path):
         (1, 300.0, 300.0),
     ]
     conn.close()
+
+
+# --- the read window (the web server's start date) --------------------------
+
+
+def windowed_store(tmp_path):
+    """Three hourly snapshots, plus one sale that vanishes before the cutoff.
+
+    t=1000: Axe (tx1) and Arctic Fox (tx2)   <- hidden by the cutoff below
+    t=2000: Arctic Fox (tx2)                 <- first visible snapshot
+    t=3000: Sword (tx3)                      <- latest visible snapshot
+    """
+    conn = store.open_store(tmp_path / "m.db")
+    store.record_snapshot(
+        conn,
+        [
+            mk(1, item_id="Axe_R_I", item_type="Design", price=100, expiry=200_000),
+            mk(2, item_id="4ArcticFoxFur", item_type="Material", price=1000, expiry=200_000),
+        ],
+        captured_at=1000.0,
+    )
+    store.record_snapshot(conn, [mk(2, item_id="4ArcticFoxFur", item_type="Material", price=1000, expiry=200_000)], captured_at=2000.0)
+    store.record_snapshot(conn, [mk(3, item_id="Sword_U_III", item_type="Trait", price=500, expiry=200_000)], captured_at=3000.0)
+    return conn
+
+
+def test_start_cutoff_hides_whole_snapshots(tmp_path):
+    """`since` drops snapshots from the snapshot-level reads themselves."""
+    conn = windowed_store(tmp_path)
+    assert store.snapshot_count(conn) == 3
+    assert store.snapshot_count(conn, since=1500.0) == 2
+    assert store.snapshot_count(conn, since=10_000.0) == 0
+
+    latest = store.latest_snapshot(conn, since=1500.0)
+    assert latest["id"] == 3 and latest["captured_at"] == 3000.0
+    assert store.previous_snapshot(conn, latest["id"], since=1500.0)["id"] == 2
+    # the cutoff hides the one remaining earlier snapshot, so there is no previous
+    assert store.previous_snapshot(conn, latest["id"], since=2500.0) is None
+    assert store.latest_snapshot(conn, since=10_000.0) is None
+    conn.close()
+
+
+def test_start_cutoff_narrows_the_item_views(tmp_path):
+    """An item seen only before the cutoff counts as never observed."""
+    conn = windowed_store(tmp_path)
+
+    assert [r["item_id"] for r in store.active_listings(conn, since=1500.0)] == ["Sword_U_III"]
+    assert store.price_history(conn, "Axe_R_I") is not None  # without the cutoff it exists
+    assert store.price_history(conn, "Axe_R_I", since=1500.0) is None
+
+    # the sale that vanished before the cutoff is not news: it was never visible
+    assert [r["item_id"] for r in store.recently_removed(conn, since=1500.0)] == ["4ArcticFoxFur"]
+    assert store.recently_removed(conn, since=2500.0) == []  # no second visible snapshot
+    assert [r["item_id"] for r in store.recently_removed(conn, window=timedelta(days=1), since=1500.0)] == ["4ArcticFoxFur"]
+
+    # the historical aggregates only see the visible snapshots
+    rows = store.items_not_on_sale(conn, since=1500.0, order="item")
+    assert [r["item_id"] for r in rows] == ["4ArcticFoxFur"]
+    assert rows[0]["last_seen"] == 2000.0
+    assert rows[0]["median_unit_price"] == 1000
+
+    # search still finds the catalogue item; its market data follows the window
+    fox = store.search_items(conn, "arcticfox", since=1500.0)[0]
+    assert fox["listed_now"] is False and fox["median_unit_price"] == 1000  # seen at t=2000
+    hidden = store.search_items(conn, "arcticfox", since=2500.0)[0]
+    assert hidden["listed_now"] is False and hidden["median_unit_price"] is None  # nothing visible
+    assert store.search_items(conn, "arcticfox")[0]["median_unit_price"] == 1000
+
+    # best sellers: the hidden listing is gone, and the visible first snapshot
+    # left-censors the sale it holds
+    sellers = {r["item_id"]: r for r in store.best_sellers(conn, min_sales=0, since=1500.0)}
+    assert "Axe_R_I" not in sellers
+    assert sellers["4ArcticFoxFur"]["sales"] == 1 and sellers["4ArcticFoxFur"]["timed_sales"] == 0
+    assert "Axe_R_I" in {r["item_id"] for r in store.best_sellers(conn, min_sales=0)}
+
+    overview = store.market_overview(conn, since=1500.0)
+    assert overview["snapshot_count"] == 2
+    assert [s["t"] for s in overview["supply_history"]] == [2000.0, 3000.0]
+    assert overview["active_listings"] == 1
+    conn.close()
