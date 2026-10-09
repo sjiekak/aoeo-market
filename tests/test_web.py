@@ -82,11 +82,19 @@ def test_dashboard_shell_is_mobile_ready(tmp_path):
     Every table is deliberately ``nowrap`` and several are wider than a phone
     viewport, so each one is wrapped in the ``.table-wrap`` scroll container;
     a table added without it would stretch the whole page again (which used to
-    clip the sticky header and every card at the viewport edge).
+    clip the sticky header and every card at the viewport edge).  Two pieces of
+    front-end wiring go with it, so the assertions below pin all three:
+
+    * the ``.table-top`` twin scroll bar above each table, mirrored by app.js,
+      which is what lets a long table be panned without scrolling to its end;
+    * the ``data-label`` on every cell and the ``≤640px`` card rules that stack
+      a row into labeled lines on a phone, with ``table.sortable`` keeping the
+      header buttons (the only way to sort there).
     """
     app = app_for(tmp_path)
     _, _, html = app.handle("/")
     _, _, css = app.handle("/static/style.css")
+    _, _, js = app.handle("/static/app.js")
 
     tables = html.count(b"<table")
     assert tables >= 1
@@ -96,6 +104,15 @@ def test_dashboard_shell_is_mobile_ready(tmp_path):
     assert b".table-wrap {" in css and b"overflow-x: auto" in css
     assert b"@media (max-width: 640px)" in css  # the phone breakpoint
     assert b"flex-wrap: nowrap" in css  # the tab row scrolls instead of stacking
+
+    # a wide table scrolls from above as well as from below
+    assert b".table-top {" in css and b".table-top[hidden]" in css
+    assert b"table-top-spacer" in css and b"table-top" in js
+
+    # on a phone the cells stack into cards, captioned from their column header
+    assert b"attr(data-label)" in css and b"dataset.label" in js
+    assert b"table.sortable thead" in css and b"sortable" in js
+    assert b"MutationObserver" in js  # rows rebuilt by a render are re-captioned
 
 
 def test_item_pages_serve_the_dashboard_shell(tmp_path):

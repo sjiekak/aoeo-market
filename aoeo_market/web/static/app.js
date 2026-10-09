@@ -124,6 +124,78 @@ function makeChart(canvasId, config) {
 	charts[canvasId] = new Chart($(canvasId), config);
 }
 
+/* --- responsive tables ----------------------------------------------------
+   On a phone the CSS stacks each row into a card of label/value lines (see
+   the ≤640px block in style.css).  That needs a little help from here:
+
+     * every cell gets the text of its column header as `data-label`, the card
+       line's caption — re-applied after each render, because the rows are
+       rebuilt from scratch;
+     * a sortable table is marked `sortable`, so the stylesheet keeps its
+       header buttons (the only way to sort on a phone) above the cards;
+     * every table gets an empty twin scroll bar *above* it, mirroring the one
+       below, so a long table can be panned without first scrolling to its end.
+*/
+function labelRows(table) {
+	const headers = [...table.querySelectorAll("thead th")].map((th) =>
+		th.textContent.trim(),
+	);
+	for (const row of table.querySelectorAll("tbody tr")) {
+		[...row.children].forEach((cell, i) => {
+			// an empty-state row spans the table: it is a note, not a card
+			if (headers[i] && !cell.hasAttribute("colspan")) {
+				cell.dataset.label = headers[i];
+			}
+		});
+	}
+}
+
+function addTopScrollBar(wrap, table) {
+	const bar = document.createElement("div");
+	const spacer = document.createElement("div");
+	bar.className = "table-top";
+	spacer.className = "table-top-spacer";
+	bar.appendChild(spacer);
+	wrap.before(bar);
+
+	// The spacer carries the table's own width and the bar shares the wrapper's
+	// padding, so both elements have the same scroll range and stay in step.
+	const fit = () => {
+		spacer.style.width = `${table.offsetWidth}px`;
+		bar.hidden = table.offsetWidth <= wrap.clientWidth;
+	};
+	bar.addEventListener("scroll", () => {
+		wrap.scrollLeft = bar.scrollLeft;
+	});
+	wrap.addEventListener("scroll", () => {
+		bar.scrollLeft = wrap.scrollLeft;
+	});
+	// A render can change the table's width without resizing the wrapper, and a
+	// tab switch or a window resize changes both: watch the table, and keep the
+	// window listener as the cheap safety net for engines without ResizeObserver.
+	if (window.ResizeObserver) new ResizeObserver(fit).observe(table);
+	window.addEventListener("resize", fit);
+	fit();
+}
+
+function prepareTables() {
+	document.querySelectorAll(".table-wrap").forEach((wrap) => {
+		const table = wrap.querySelector("table");
+		if (!table) return;
+		if (table.querySelector("thead th button")) {
+			table.classList.add("sortable");
+		}
+		const body = table.querySelector("tbody");
+		if (body) {
+			new MutationObserver(() => labelRows(table)).observe(body, {
+				childList: true,
+			});
+		}
+		labelRows(table);
+		addTopScrollBar(wrap, table);
+	});
+}
+
 // The time-series charts (market supply, item price history) share one x axis:
 // epoch-milliseconds on a linear scale, tick labels in local time, and the tick
 // count left to Chart.js so both render the same axis. A fresh object per chart
@@ -1057,6 +1129,9 @@ function route() {
 
 async function boot() {
 	await loadSprites(); // icon positions are needed by the item icon and every table
+	// The tables scroll and stack per row, so they are wired before the first
+	// render (prepareTables observes each body and labels whatever it holds).
+	prepareTables();
 	// route() opens the one view the URL asks for, and showTab() fetches only
 	// that tab's data — so an item page never requests the dashboard's data.
 	route();
