@@ -151,6 +151,25 @@ view from the URL, so item links are real, shareable pages (with the item's
 name as the document title) rather than `#` fragments. An unknown id still
 returns the shell; the page then reports that the item was never observed.
 
+The layout is responsive. On a phone (≤640px) the tab bar becomes a single
+horizontally scrollable row instead of a three-line stack, the KPI cards pair
+up, the charts lose some height, and **every table becomes one card per row**:
+each cell renders as a label/value line, the label copied from its column
+header (`data-label`, applied by `prepareTables` in `static/app.js`) and
+re-applied after every render by a `MutationObserver`, so nothing is dropped
+and nothing scrolls sideways. A sortable table keeps its header buttons above
+the cards under a "Sort:" hint — they are the only way to sort there — while a
+table without them has nothing left to show once the labels moved into the
+cards. The wide-screen layout is unchanged.
+
+Above 640px the tables stay tables and scroll **inside their card**
+(`.table-wrap`) rather than stretching the page (which used to clip the sticky
+header and every other card at the viewport edge). A widish table also gets a
+matching scroll bar **above** it (`.table-top`, a spacer as wide as the table,
+built by `prepareTables`): without it, a long table could only be panned after
+scrolling to its very end. The two bars mirror each other's position and the
+top one hides itself while the table fits.
+
 ## JSON API
 
 Every route below except `POST /api/snapshot` is served on the **read port**
