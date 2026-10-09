@@ -22,6 +22,14 @@ That split maps directly onto Kubernetes: the web app runs as a StatefulSet
 pod owning the database volume, and ``fetch --store <url>`` runs as a
 CronJob that only needs network access to the write port.
 
+``--since`` (``--start-date``) fixes a **start date** on the whole process: the
+read views then only see snapshots captured at or after it, so a long history
+can be trimmed to what the dashboard should show.  It is deliberately a
+start-up argument and not a query parameter — the API cannot read outside the
+window the operator chose, and nothing is deleted: the older snapshots stay in
+the file, ingestion keeps appending to it, and a restart without ``--since``
+serves them again.
+
 Endpoints are documented in the machine-readable OpenAPI 3.0 reference
 served at ``GET /openapi.json`` (generated in :mod:`aoeo_market.web.openapi`
 from the routing metadata, so it cannot drift from the implementation).
@@ -39,11 +47,12 @@ import argparse
 import gzip
 import hashlib
 import json
+import re
 import sys
 import threading
 import urllib.parse
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -82,6 +91,33 @@ _WRITE_ENDPOINT = "/api/snapshot"
 # the last step before the payload is serialized.  A later change can drop the
 # field from the contract entirely; for now the shape stays stable.
 REDACTED_SELLER_ID = 0
+
+# A bare calendar date (the common ``--since 2026-09-01`` form) is parsed as
+# midnight UTC; anything else goes through the full ISO-8601 parser.
+_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def parse_start_date(value: str) -> float:
+    """Parse a ``--since`` value into Unix seconds (UTC).
+
+    Accepts a calendar date (``2026-09-01``, read as midnight UTC — every
+    timestamp in the database is UTC) or a full ISO-8601 instant
+    (``2026-09-01T12:30:00Z``); a value without an offset is read as UTC too.
+    Raises :class:`ValueError` for anything else, so :func:`main` can report it
+    as an argument error.
+    """
+    text = value.strip()
+    try:
+        if _DATE_ONLY.match(text):
+            day = date.fromisoformat(text)
+            parsed = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        else:
+            parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"{value!r} is not a date (YYYY-MM-DD) or an ISO-8601 instant") from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.timestamp()
 
 
 def _error_body(message: str) -> bytes:
@@ -139,10 +175,17 @@ class _BadParam(ValueError):
 
 
 class WebApp:
-    """Routing + JSON API over one snapshot database (sole writer)."""
+    """Routing + JSON API over one snapshot database (sole writer).
 
-    def __init__(self, db_path: str):
+    *since* is the process-wide start date (Unix seconds, from ``--since``):
+    when set, every read is restricted to snapshots captured at or after it.
+    The write path ignores it — snapshots keep being appended whatever the
+    window — so the cutoff is a pure read-side view of the same file.
+    """
+
+    def __init__(self, db_path: str, since: float | None = None):
         self.db_path = db_path
+        self.since = since
         # DuckDB forbids mixing read-only and read-write connections to the
         # same file in one process, so every connection here is read-write;
         # this process is the single owner of the file by design.  One
@@ -173,7 +216,7 @@ class WebApp:
             if path.startswith("/static/"):
                 return self._static(path[len("/static/") :])
             if path == "/api/overview":
-                return self._json(self._query(store.market_overview))
+                return self._json(self._query(lambda conn: store.market_overview(conn, since=self.since)))
             if path == "/api/listings":
                 rows = self._query(
                     lambda conn: store.active_listings(
@@ -183,6 +226,7 @@ class WebApp:
                         sort=query.get("sort", ["price"])[0],
                         direction=query.get("dir", ["asc"])[0],
                         cache=self._views,
+                        since=self.since,
                     )
                 )
                 return self._json(self._page(rows, query))
@@ -193,6 +237,7 @@ class WebApp:
                             conn,
                             order=query.get("order", ["median_unit_price"])[0],
                             direction=query.get("dir", ["desc"])[0],
+                            since=self.since,
                         )
                     )
                 )
@@ -203,6 +248,7 @@ class WebApp:
                             conn,
                             query.get("q", [""])[0],
                             limit=self._int_param(query, "limit", store.SEARCH_LIMIT),
+                            since=self.since,
                         )
                     )
                 )
@@ -215,6 +261,7 @@ class WebApp:
                             direction=query.get("dir", ["asc"])[0],
                             min_sales=self._int_param(query, "min_sales", 1),
                             cache=self._views,
+                            since=self.since,
                         )
                     )
                 )
@@ -226,14 +273,15 @@ class WebApp:
                             order=query.get("order", ["value_ratio"])[0],
                             direction=query.get("dir", ["desc"])[0],
                             cache=self._views,
+                            since=self.since,
                         )
                     )
                 )
             if path == "/api/recently-removed":
-                return self._json(self._query(lambda conn: store.recently_removed(conn, window=self._window_param(query))))
+                return self._json(self._query(lambda conn: store.recently_removed(conn, window=self._window_param(query), since=self.since)))
             if path.startswith("/api/item/"):
                 item_id = urllib.parse.unquote(path[len("/api/item/") :])
-                history = self._query(lambda conn: store.price_history(conn, item_id))
+                history = self._query(lambda conn: store.price_history(conn, item_id, since=self.since))
                 if history is None:
                     return self._error(404, f"item {item_id!r} was never observed")
                 return self._json(history)
@@ -297,7 +345,7 @@ class WebApp:
         if not Path(self.db_path).exists():
             return 503, _JSON, json.dumps({"status": "not ready", "database": "not initialized"}).encode()
         try:
-            count = self._query(store.snapshot_count)
+            count = self._query(lambda conn: store.snapshot_count(conn, since=self.since))
         except (duckdb.Error, OSError) as exc:
             return 503, _JSON, json.dumps({"status": "not ready", "database": f"error: {exc}"}).encode()
         return 200, _JSON, json.dumps({"status": "ready", "database": "ok", "snapshots": count}).encode()
@@ -375,7 +423,7 @@ class WebApp:
         a revalidating request skips the query and the serialization entirely.
         """
         with self._lock:
-            latest = store.latest_snapshot(self._conn())
+            latest = store.latest_snapshot(self._conn(), since=self.since)
         snapshot_id = latest["id"] if latest else "none"
         return f'"snap:{snapshot_id}"'
 
@@ -544,6 +592,13 @@ def main(argv: list[str] | None = None) -> int:
         description="Serve the market intelligence dashboard and the snapshot write API.",
     )
     p.add_argument("--db", default="market.db", help="DuckDB snapshot database (default market.db)")
+    p.add_argument(
+        "--since",
+        "--start-date",
+        dest="since",
+        metavar="DATE",
+        help="serve only snapshots captured at/after DATE (YYYY-MM-DD, midnight UTC, or an ISO-8601 instant); older snapshots stay stored but unserved",
+    )
     p.add_argument("--host", default="127.0.0.1", help="read API bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="read API port (default 8000)")
     p.add_argument("--write-host", default=None, help="snapshot write API bind address (default: --host)")
@@ -554,15 +609,34 @@ def main(argv: list[str] | None = None) -> int:
     if (write_host, args.write_port) == (args.host, args.port):
         p.error("--write-port must differ from --port when both bind the same host")
 
+    since: float | None = None
+    if args.since is not None:
+        try:
+            since = parse_start_date(args.since)
+        except ValueError as exc:
+            p.error(f"--since: {exc}")
+
     if not Path(args.db).exists():
         print(f"warning: {args.db} does not exist yet; run `aoeo_market.cli init-db --db {args.db}` (or POST a snapshot) to create it", file=sys.stderr)
 
-    app = WebApp(args.db)
+    app = WebApp(args.db, since=since)
+    if since is not None and Path(args.db).exists():
+        # The window is legal but may hide every snapshot; say so instead of
+        # leaving the operator with a dashboard that silently shows nothing.
+        # A database that cannot be opened here is not fatal — the first
+        # request reports it with the status code that belongs to it.
+        try:
+            empty_window = app.data_validator() == '"snap:none"'
+        except (duckdb.Error, OSError):
+            empty_window = False
+        if empty_window:
+            print(f"warning: no snapshot is at or after {args.since}; every read view will be empty", file=sys.stderr)
     read_server, write_server = create_servers(app, args.host, args.port, write_host, args.write_port)
 
     writing = threading.Thread(target=write_server.serve_forever, name="snapshot-write", daemon=True)
     writing.start()
-    print(f"Serving the Merchant Zeno dashboard on http://{args.host}:{args.port} (db: {args.db})")
+    window = "" if since is None else f", snapshots since {args.since}"
+    print(f"Serving the Merchant Zeno dashboard on http://{args.host}:{args.port} (db: {args.db}{window})")
     print(f"Serving the snapshot write API on http://{write_host}:{args.write_port} (POST {_WRITE_ENDPOINT})")
     try:
         read_server.serve_forever()

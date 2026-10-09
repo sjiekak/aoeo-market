@@ -229,6 +229,12 @@ class SnapshotCache:
     The lock makes it safe for the web server's request threads: a value is
     computed outside the lock (so two threads asking for the same cold key may
     both compute it) and only stored while its snapshot id is still current.
+
+    A cached view is keyed by the latest *visible* snapshot id, which is a
+    complete key only while one start cutoff is in force: the best-sellers and
+    best-value computations also depend on how far back the window reaches, so
+    a cache instance must not serve two different ``since`` values.  The web
+    server has exactly one cutoff per process, which is what makes that hold.
     """
 
     def __init__(self) -> None:
@@ -322,19 +328,68 @@ def median(values: Sequence[int]) -> float:
     return (s[mid - 1] + s[mid]) / 2.0
 
 
+# --- read window (the web server's start cutoff) ----------------------------
+
+# The website may be started with a start date, so snapshots captured before it
+# are not served at all (very old history can make the views slow and the
+# charts unreadable).  The cutoff is a property of the process, never of a
+# request — the API has no parameter for it — so it is threaded through the
+# read views as a plain ``since`` argument (Unix seconds) and applied to the
+# ``snapshots`` table.  Ingestion is never filtered: nothing is deleted or
+# refused, the old snapshots simply stop being visible to the read views.
+#
+# The three helpers below keep the two ways a view can be restricted in step:
+# a query that joins ``snapshots`` gets :func:`_since_sql`, and a query that
+# aggregates ``listings`` on its own gets :func:`_visible_ids` so a row is
+# dropped with the snapshot it belongs to.  Both emit one ``?`` placeholder
+# when a cutoff is set, and :func:`_since_values` is the matching bind value —
+# in textual order, like every other parameter of the query.
+
+
+def _since_sql(since: float | None, *, first: bool = False) -> str:
+    """The ``captured_at >= ?`` predicate for *since* (empty without a cutoff).
+
+    ``first`` opens a query (``WHERE``); otherwise the predicate is appended to
+    one that already has a ``WHERE`` (``AND``).  The column is unqualified
+    because ``snapshots`` is the only table that has a ``captured_at``.
+    """
+    if since is None:
+        return ""
+    return " WHERE captured_at >= ?" if first else " AND captured_at >= ?"
+
+
+def _since_values(since: float | None) -> list[float]:
+    """The bind values :func:`_since_sql` / :func:`_visible_ids` expect."""
+    return [] if since is None else [since]
+
+
+def _visible_ids(since: float | None) -> str:
+    """SQL subquery of the snapshot ids a read may see (one ``?`` when filtered)."""
+    if since is None:
+        return "(SELECT id FROM snapshots)"
+    return "(SELECT id FROM snapshots WHERE captured_at >= ?)"
+
+
 # --- snapshot helpers ------------------------------------------------------
 
 
-def latest_snapshot(conn: duckdb.DuckDBPyConnection) -> dict | None:
-    return _row(conn, "SELECT id, captured_at FROM snapshots ORDER BY id DESC LIMIT 1")
+def latest_snapshot(conn: duckdb.DuckDBPyConnection, *, since: float | None = None) -> dict | None:
+    """The newest snapshot the reader may see (``since`` hides older ones)."""
+    return _row(conn, f"SELECT id, captured_at FROM snapshots{_since_sql(since, first=True)} ORDER BY id DESC LIMIT 1", _since_values(since))
 
 
-def previous_snapshot(conn: duckdb.DuckDBPyConnection, snapshot_id: int) -> dict | None:
-    return _row(conn, "SELECT id, captured_at FROM snapshots WHERE id < ? ORDER BY id DESC LIMIT 1", [snapshot_id])
+def previous_snapshot(conn: duckdb.DuckDBPyConnection, snapshot_id: int, *, since: float | None = None) -> dict | None:
+    """The snapshot before *snapshot_id*, skipping the ones a cutoff hides."""
+    return _row(
+        conn,
+        f"SELECT id, captured_at FROM snapshots WHERE id < ?{_since_sql(since)} ORDER BY id DESC LIMIT 1",
+        [snapshot_id, *_since_values(since)],
+    )
 
 
-def snapshot_count(conn: duckdb.DuckDBPyConnection) -> int:
-    return int(_scalar(conn, "SELECT COUNT(*) FROM snapshots"))
+def snapshot_count(conn: duckdb.DuckDBPyConnection, *, since: float | None = None) -> int:
+    """How many snapshots the reader may see (the cutoff drops older ones)."""
+    return int(_scalar(conn, f"SELECT COUNT(*) FROM snapshots{_since_sql(since, first=True)}", _since_values(since)))
 
 
 # --- listing views ---------------------------------------------------------
@@ -373,19 +428,23 @@ def active_listings(
     sort: str = "price",
     direction: str = "asc",
     cache: SnapshotCache | None = None,
+    since: float | None = None,
 ) -> list[dict]:
     """Listings of one snapshot (the latest by default), filtered and sorted.
 
     ``sort`` must be a key of :data:`_SORT_COLUMNS`; ``direction`` ``asc`` or
     ``desc``.  ``q`` is a case-insensitive substring filter on the item id
     **and** its catalog display name (so "xerxes" and "the Great" both match).
+    With a ``since`` cutoff the default snapshot is the latest *visible* one
+    (an explicit *snapshot_id* is the caller's business — the item page passes
+    the latest it resolved itself).
 
     With a *cache* the enriched rows are computed once per snapshot and query
     shape; the sort and the display-name filter only ever run over that
     snapshot's rows, so they are cheap to redo.
     """
     if snapshot_id is None:
-        latest = latest_snapshot(conn)
+        latest = latest_snapshot(conn, since=since)
         snapshot_id = latest["id"] if latest else -1
     if direction not in ("asc", "desc"):
         direction = "asc"
@@ -428,9 +487,15 @@ _PRICE_BINS: tuple[tuple[int, str], ...] = (
 )
 
 
-def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15) -> dict:
-    """Aggregate stats for the dashboard's overview tab."""
-    latest = latest_snapshot(conn)
+def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15, *, since: float | None = None) -> dict:
+    """Aggregate stats for the dashboard's overview tab.
+
+    With a ``since`` cutoff the whole overview is read from the visible
+    snapshots only: the latest is the newest visible one, the snapshot count
+    and the supply history skip the hidden ones, and the movers compare the two
+    most recent visible snapshots (none when only one is left visible).
+    """
+    latest = latest_snapshot(conn, since=since)
     if latest is None:
         return {
             "latest": None,
@@ -455,11 +520,13 @@ def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15) -> di
     prices = [r["item_price"] / max(r["item_count"], 1) for r in _rows(conn, "SELECT item_price, item_count FROM listings WHERE snapshot_id = ?", [sid])]
     supply = _rows(
         conn,
-        """
+        f"""
         SELECT s.captured_at AS t, COUNT(l.transaction_id) AS count
         FROM snapshots s LEFT JOIN listings l ON l.snapshot_id = s.id
+        {_since_sql(since, first=True)}
         GROUP BY s.id, s.captured_at ORDER BY s.id
         """,
+        _since_values(since),
     )
 
     # Rarity histogram: authoritative rarity from the catalog, falling back to
@@ -470,12 +537,12 @@ def market_overview(conn: duckdb.DuckDBPyConnection, top_movers: int = 15) -> di
         rarity_bins[name] = rarity_bins.get(name, 0) + 1
 
     # Median price per item in the latest and previous snapshots -> movers.
-    prev = previous_snapshot(conn, sid)
+    prev = previous_snapshot(conn, sid, since=since)
     movers = _price_movers(conn, sid, prev["id"] if prev else None, top_movers)
 
     return {
         "latest": latest,
-        "snapshot_count": snapshot_count(conn),
+        "snapshot_count": snapshot_count(conn, since=since),
         "active_listings": active,
         "distinct_items": distinct,
         "supply_history": supply,
@@ -580,24 +647,25 @@ def _median_prices_by_item(conn: duckdb.DuckDBPyConnection, snapshot_id: int) ->
 # --- per-item history ------------------------------------------------------
 
 
-def _material_prices(conn: duckdb.DuckDBPyConnection, item_ids: Sequence[str]) -> dict[str, float]:
+def _material_prices(conn: duckdb.DuckDBPyConnection, item_ids: Sequence[str], *, since: float | None = None) -> dict[str, float]:
     """Per-unit price per item id: current median when listed now, else historical.
 
     Same per-unit normalisation as every other view, so a stack's total price
-    never leaks into an estimate.
+    never leaks into an estimate.  Both medians come from the visible snapshots
+    only, so a cutoff never lets a pre-cutoff price back into a recipe cost.
     """
     ids = sorted({i.lower() for i in item_ids if i})
     if not ids:
         return {}
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     latest_id = latest["id"] if latest else None
     placeholders = ",".join("?" for _ in ids)
     every: dict[str, list[float]] = {}
     active: dict[str, list[float]] = {}
     for r in _rows(
         conn,
-        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE lower(item_id) IN ({placeholders})",
-        ids,
+        f"SELECT item_id, item_price, item_count, snapshot_id FROM listings WHERE lower(item_id) IN ({placeholders}) AND snapshot_id IN {_visible_ids(since)}",
+        [*ids, *_since_values(since)],
     ):
         unit = r["item_price"] / max(r["item_count"], 1)
         key = r["item_id"].lower()
@@ -607,12 +675,12 @@ def _material_prices(conn: duckdb.DuckDBPyConnection, item_ids: Sequence[str]) -
     return {k: median(active.get(k) or ps) for k, ps in every.items()}
 
 
-def _recipe_payload(conn: duckdb.DuckDBPyConnection, item_id: str) -> dict | None:
+def _recipe_payload(conn: duckdb.DuckDBPyConnection, item_id: str, *, since: float | None = None) -> dict | None:
     """The crafting recipe with per-material prices and a total cost estimate."""
     recipe = recipe_of(item_id)
     if not recipe:
         return None
-    prices = _material_prices(conn, [(m.get("id") or "") for m in recipe.get("materials", [])])
+    prices = _material_prices(conn, [(m.get("id") or "") for m in recipe.get("materials", [])], since=since)
     materials: list[dict] = []
     total = 0.0
     priced = 0
@@ -656,7 +724,7 @@ def _dismantle_payload(item_id: str) -> dict | None:
     }
 
 
-def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int = 2000) -> dict | None:
+def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int = 2000, *, since: float | None = None) -> dict | None:
     """Current and previous listings plus the price series of one item.
 
     Prices are per unit (item_price / item_count) so listings of different
@@ -668,16 +736,20 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     long histories stay chartable.  ``histogram`` is the per-unit price
     distribution of the item's distinct listings, binned across the observed
     price range.
+
+    With a ``since`` cutoff the history starts at the first visible snapshot:
+    an item seen only before the cutoff was never observed as far as the reader
+    is concerned, so it returns ``None`` (the API answers 404).
     """
     rows = _rows(
         conn,
         f"""
         SELECT {_listing_columns("l")}, s.captured_at AS t
         FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
-        WHERE lower(l.item_id) = lower(?)
+        WHERE lower(l.item_id) = lower(?){_since_sql(since)}
         ORDER BY s.id, l.item_price
         """,
-        [item_id],
+        [item_id, *_since_values(since)],
     )
     if not rows:
         return None
@@ -686,14 +758,17 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     # the stored one and every downstream lookup and the returned id agree.
     item_id = rows[0]["item_id"]
 
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     active_txs: set[int] = set()
     if latest:
         active_txs = {
             r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ? AND item_id = ?", [latest["id"], item_id])
         }
 
-    snaps = {r["id"]: r["captured_at"] for r in _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")}
+    snaps = {
+        r["id"]: r["captured_at"]
+        for r in _rows(conn, f"SELECT id, captured_at FROM snapshots{_since_sql(since, first=True)} ORDER BY id", _since_values(since))
+    }
     snap_ids = sorted(snaps)
     next_sid = {snap_ids[i]: snap_ids[i + 1] for i in range(len(snap_ids) - 1)}
 
@@ -779,7 +854,7 @@ def price_history(conn: duckdb.DuckDBPyConnection, item_id: str, max_points: int
     rar = rarity_of(item_id)
     extra = catalog_fields(item_id)
     name = extra.pop("name", None)
-    recipe = _recipe_payload(conn, item_id)
+    recipe = _recipe_payload(conn, item_id, since=since)
     dismantle = _dismantle_payload(item_id)
     out = {
         "item_id": item_id,
@@ -825,6 +900,7 @@ def items_not_on_sale(
     *,
     order: str = "median_unit_price",
     direction: str = "desc",
+    since: float | None = None,
 ) -> list[dict]:
     """Items seen historically that have **no active listing right now**.
 
@@ -836,31 +912,41 @@ def items_not_on_sale(
     (item, type, level) min/max and count, and the snapshot the item was last
     seen in.  The earlier implementation ran two more queries per item to
     collect those, which dominated the view once the history was long.
+
+    With a ``since`` cutoff the aggregates cover the visible snapshots only, so
+    the "historical" median and the "last seen" instant never point at a
+    hidden snapshot, and an item that vanished before the cutoff is not
+    reported as missing now (as far as the reader is concerned it never was on
+    sale).
     """
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     if latest is None:
         return []
     rows = _rows(
         conn,
-        """
-        WITH last_seen AS (
+        f"""
+        WITH visible AS (SELECT id FROM snapshots{_since_sql(since, first=True)}),
+        last_seen AS (
             SELECT l.item_id,
                    arg_max(s.captured_at, s.id) AS last_seen,
                    arg_max(l.item_type, s.id) AS item_type,
                    arg_max(l.item_level, s.id) AS item_level
             FROM listings l JOIN snapshots s ON s.id = l.snapshot_id
+            WHERE l.snapshot_id IN (SELECT id FROM visible)
             GROUP BY l.item_id
         ),
         item_median AS (
             SELECT item_id, median(item_price / greatest(item_count, 1)) AS median_price
-            FROM listings GROUP BY item_id
+            FROM listings WHERE snapshot_id IN (SELECT id FROM visible)
+            GROUP BY item_id
         ),
         groups AS (
             SELECT item_id, item_type, item_level,
                    count(*) AS times_listed,
                    min(item_price * 1.0 / item_count) AS min_price,
                    max(item_price * 1.0 / item_count) AS max_price
-            FROM listings GROUP BY item_id, item_type, item_level
+            FROM listings WHERE snapshot_id IN (SELECT id FROM visible)
+            GROUP BY item_id, item_type, item_level
         )
         SELECT g.item_id, ls.item_type, ls.item_level, g.times_listed, g.min_price, g.max_price,
                m.median_price, ls.last_seen
@@ -869,7 +955,7 @@ def items_not_on_sale(
         JOIN item_median m ON m.item_id = g.item_id
         WHERE g.item_id NOT IN (SELECT DISTINCT item_id FROM listings WHERE snapshot_id = ?)
         """,
-        [latest["id"]],
+        [*_since_values(since), latest["id"]],
     )
 
     out: list[dict] = []
@@ -901,7 +987,7 @@ def items_not_on_sale(
     return out
 
 
-def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | None = None) -> list[dict]:
+def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | None = None, since: float | None = None) -> list[dict]:
     """Listings that vanished, relative to the latest snapshot.
 
     With ``window=None`` (the default) this is the delta between the two most
@@ -914,12 +1000,18 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
     Classified like the live observer: EXPIRED when the listing timed out with
     less than a day left on its countdown, REMOVED (sold or withdrawn —
     indistinguishable) otherwise.
+
+    A ``since`` cutoff narrows "vanished" to the visible snapshots: with the
+    default frame the delta is between the two most recent visible snapshots
+    (none when the cutoff leaves only one), and a time window never reports a
+    listing whose last sighting is hidden — from the reader's point of view it
+    was never on the market.
     """
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     if latest is None:
         return []
     if window is None:
-        prev = previous_snapshot(conn, latest["id"])
+        prev = previous_snapshot(conn, latest["id"], since=since)
         if prev is None:
             return []
         gone = _rows(
@@ -940,17 +1032,19 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
         gone = _rows(
             conn,
             f"""
-            WITH vanished AS (
+            WITH visible AS (SELECT id, captured_at FROM snapshots{_since_sql(since, first=True)}),
+            vanished AS (
                 SELECT transaction_id, MAX(snapshot_id) AS last_sid
                 FROM listings
-                WHERE transaction_id NOT IN (
+                WHERE snapshot_id IN (SELECT id FROM visible)
+                  AND transaction_id NOT IN (
                     SELECT transaction_id FROM listings WHERE snapshot_id = ?
                 )
                 GROUP BY transaction_id
             ),
             vtimes AS (
                 SELECT transaction_id, last_sid,
-                       (SELECT MIN(id) FROM snapshots WHERE id > last_sid) AS vanish_sid
+                       (SELECT MIN(id) FROM visible WHERE id > last_sid) AS vanish_sid
                 FROM vanished
             )
             SELECT {_listing_columns("l")}, s.captured_at AS last_seen, vs.captured_at AS vanished_at
@@ -960,7 +1054,7 @@ def recently_removed(conn: duckdb.DuckDBPyConnection, *, window: timedelta | Non
             JOIN snapshots vs ON vs.id = v.vanish_sid
             WHERE vs.captured_at >= ?
             """,
-            [latest["id"], window_start],
+            [*_since_values(since), latest["id"], window_start],
         )
     out = []
     for g in gone:
@@ -1018,8 +1112,10 @@ _BEST_SELLER_SORTS = {
 # its latest unit price and countdown, and the item it is for.  The item fields
 # are taken at the first snapshot (``arg_min``) to match the old scan, which
 # read them from a transaction's first row.  Aggregating in SQL turns the
-# whole-history listing scan into one row per transaction — the expensive part
-# of this view, and the part the snapshot cache stores.
+# whole-window listing scan into one row per transaction — the expensive part
+# of this view, and the part the snapshot cache stores.  ``{window}`` is the
+# optional start-cutoff predicate (empty without one), so a hidden snapshot's
+# transactions never enter the view at all.
 _BEST_SELLER_TX_SQL = """
     SELECT transaction_id,
            min(snapshot_id) AS first_sid,
@@ -1030,21 +1126,25 @@ _BEST_SELLER_TX_SQL = """
            arg_max(item_price / greatest(item_count, 1), snapshot_id) AS unit_price,
            arg_max(seconds_till_expiry, snapshot_id) AS expiry
     FROM listings
+    {window}
     GROUP BY transaction_id
     ORDER BY transaction_id
 """
 
 
-def _best_seller_rows(conn: duckdb.DuckDBPyConnection, latest: dict, cache: SnapshotCache | None) -> list[dict]:
+def _best_seller_rows(conn: duckdb.DuckDBPyConnection, latest: dict, cache: SnapshotCache | None, since: float | None = None) -> list[dict]:
     """Per-item best-seller rows, before ordering and ``min_sales`` filtering.
 
     The whole computation depends only on the stored snapshots, so with a
     *cache* it runs once per snapshot id; ordering and filtering stay in
-    :func:`best_sellers` and are redone per request.
+    :func:`best_sellers` and are redone per request.  Under a ``since`` cutoff
+    the first *visible* snapshot is the left-censoring boundary, so a listing
+    first seen there is treated exactly as one first seen in the very first
+    snapshot of an unfiltered database.
     """
 
     def compute() -> list[dict]:
-        snaps = _rows(conn, "SELECT id, captured_at FROM snapshots ORDER BY id")
+        snaps = _rows(conn, f"SELECT id, captured_at FROM snapshots{_since_sql(since, first=True)} ORDER BY id", _since_values(since))
         first_id = snaps[0]["id"]
         snap_ids = [s["id"] for s in snaps]
         snap_times = {s["id"]: s["captured_at"] for s in snaps}
@@ -1052,9 +1152,10 @@ def _best_seller_rows(conn: duckdb.DuckDBPyConnection, latest: dict, cache: Snap
         # vanished; a dict keeps the lookup O(1) instead of scanning the list.
         next_sid = {snap_ids[i]: snap_ids[i + 1] for i in range(len(snap_ids) - 1)}
         active_txs = {r["transaction_id"] for r in _rows(conn, "SELECT transaction_id FROM listings WHERE snapshot_id = ?", [latest["id"]])}
+        window = "" if since is None else "WHERE snapshot_id IN (SELECT id FROM snapshots WHERE captured_at >= ?)"
 
         items: dict[str, dict] = {}
-        for r in _rows(conn, _BEST_SELLER_TX_SQL):
+        for r in _rows(conn, _BEST_SELLER_TX_SQL.format(window=window), _since_values(since)):
             it = items.setdefault(
                 r["item_id"],
                 {"item_type": r["item_type"], "item_level": r["item_level"], "sales": 0, "expired": 0, "timed": [], "active_prices": [], "last_seen": 0.0},
@@ -1110,6 +1211,7 @@ def best_sellers(
     direction: str = "asc",
     min_sales: int = 1,
     cache: SnapshotCache | None = None,
+    since: float | None = None,
 ) -> list[dict]:
     """Items ranked by how fast their listings sell — time-to-sale.
 
@@ -1124,11 +1226,13 @@ def best_sellers(
     interval.
 
     Only items with at least ``min_sales`` fully observed sales are returned.
+    A ``since`` cutoff makes the first *visible* snapshot the left-censoring
+    boundary and hides the transactions of every older snapshot.
     """
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     if latest is None:
         return []
-    out = [r for r in _best_seller_rows(conn, latest, cache) if r["timed_sales"] >= min_sales]
+    out = [r for r in _best_seller_rows(conn, latest, cache, since=since) if r["timed_sales"] >= min_sales]
     col = _BEST_SELLER_SORTS.get(order, "median_time")
     if col in ("item_id", "item_type", "last_seen"):
         key = lambda d: d[col]
@@ -1167,13 +1271,15 @@ def _crafting_value_items() -> set[str]:
     return wanted
 
 
-def _crafting_value_rows(conn: duckdb.DuckDBPyConnection, latest_id: int | None, cache: SnapshotCache | None) -> list[dict]:
+def _crafting_value_rows(conn: duckdb.DuckDBPyConnection, latest_id: int | None, cache: SnapshotCache | None, since: float | None = None) -> list[dict]:
     """Craftable-item value rows, before ordering.
 
     Only the craftable items and their ingredients are read, and their current
     and historical medians are aggregated by DuckDB.  The whole computation
     depends only on the stored snapshots, so with a *cache* it runs once per
-    snapshot id; ordering stays in :func:`crafting_value`.
+    snapshot id; ordering stays in :func:`crafting_value`.  Under a ``since``
+    cutoff both medians are computed over the visible snapshots, so a price
+    from a hidden snapshot never decides whether crafting pays.
     """
 
     def compute() -> list[dict]:
@@ -1182,7 +1288,10 @@ def _crafting_value_rows(conn: duckdb.DuckDBPyConnection, latest_id: int | None,
         # — that lets the scan be an equality filter instead of lower() on
         # every row, which no index can serve.
         wanted = _crafting_value_items()
-        spelling = {r["item_id"].lower(): r["item_id"] for r in _rows(conn, "SELECT DISTINCT item_id FROM listings")}
+        spelling = {
+            r["item_id"].lower(): r["item_id"]
+            for r in _rows(conn, f"SELECT DISTINCT item_id FROM listings WHERE snapshot_id IN {_visible_ids(since)}", _since_values(since))
+        }
         ids = sorted(spelling[key] for key in wanted if key in spelling)
         prices: dict[str, dict] = {}
         if ids:
@@ -1194,10 +1303,10 @@ def _crafting_value_rows(conn: duckdb.DuckDBPyConnection, latest_id: int | None,
                        median(item_price / greatest(item_count, 1)) AS historical,
                        median(item_price / greatest(item_count, 1)) FILTER (WHERE snapshot_id = ?) AS current,
                        count(*) FILTER (WHERE snapshot_id = ?) AS active_count
-                FROM listings WHERE item_id IN ({placeholders})
+                FROM listings WHERE item_id IN ({placeholders}) AND snapshot_id IN {_visible_ids(since)}
                 GROUP BY item_id
                 """,
-                [latest_id, latest_id, *ids],
+                [latest_id, latest_id, *ids, *_since_values(since)],
             ):
                 prices[r["item_id"].lower()] = r
 
@@ -1262,6 +1371,7 @@ def crafting_value(
     order: str = "value_ratio",
     direction: str = "desc",
     cache: SnapshotCache | None = None,
+    since: float | None = None,
 ) -> list[dict]:
     """Craftable items ranked by market price ÷ crafting cost.
 
@@ -1284,11 +1394,13 @@ def crafting_value(
     craft, and the ratio says the market has paid more.
 
     Items whose ingredients have not all been observed are skipped: a partial
-    cost would understate the cost and inflate the ratio.
+    cost would understate the cost and inflate the ratio.  Under a ``since``
+    cutoff an item or ingredient seen only in a hidden snapshot counts as
+    never observed, and both medians cover the visible snapshots only.
     """
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     latest_id = latest["id"] if latest else None
-    out = list(_crafting_value_rows(conn, latest_id, cache))
+    out = list(_crafting_value_rows(conn, latest_id, cache, since=since))
     col = _CRAFT_VALUE_SORTS.get(order, "value_ratio")
     if col in ("item_id", "type"):
         key = lambda d: d.get(col) or ""
@@ -1309,6 +1421,7 @@ def search_items(
     query: str,
     *,
     limit: int = SEARCH_LIMIT,
+    since: float | None = None,
 ) -> list[dict]:
     """Catalog items matching ``query``, each with its market summary.
 
@@ -1317,12 +1430,14 @@ def search_items(
     ``listed_now: false`` with null prices.  Otherwise the row carries the
     current median unit price while the item is listed and the historical median
     either way, the same numbers the item page and the best-value view use.
+    Both medians cover the visible snapshots, so an item the cutoff hides is
+    reported the way an item the market never saw is: findable, with no price.
     """
     limit = max(1, min(limit, MAX_SEARCH_LIMIT))
     matches = catalog_search(query, limit)
     if not matches:
         return []
-    latest = latest_snapshot(conn)
+    latest = latest_snapshot(conn, since=since)
     latest_id = latest["id"] if latest else None
     keys = [row["item_id"].lower() for row in matches]
     every: dict[str, list[float]] = {}
@@ -1333,9 +1448,9 @@ def search_items(
         conn,
         f"""
         SELECT item_id, item_price, item_count, snapshot_id
-        FROM listings WHERE lower(item_id) IN ({placeholders})
+        FROM listings WHERE lower(item_id) IN ({placeholders}) AND snapshot_id IN {_visible_ids(since)}
         """,
-        keys,
+        [*keys, *_since_values(since)],
     ):
         key = r["item_id"].lower()
         unit = r["item_price"] / max(r["item_count"], 1)
