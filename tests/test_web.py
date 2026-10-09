@@ -76,6 +76,28 @@ def test_index_and_static_files(tmp_path):
     assert status == 404
 
 
+def test_dashboard_shell_is_mobile_ready(tmp_path):
+    """The dashboard must not push the page sideways on a phone.
+
+    Every table is deliberately ``nowrap`` and several are wider than a phone
+    viewport, so each one is wrapped in the ``.table-wrap`` scroll container;
+    a table added without it would stretch the whole page again (which used to
+    clip the sticky header and every card at the viewport edge).
+    """
+    app = app_for(tmp_path)
+    _, _, html = app.handle("/")
+    _, _, css = app.handle("/static/style.css")
+
+    tables = html.count(b"<table")
+    assert tables >= 1
+    assert html.count(b'<div class="table-wrap">') == tables  # none left unwrapped
+    assert b'name="viewport"' in html
+
+    assert b".table-wrap {" in css and b"overflow-x: auto" in css
+    assert b"@media (max-width: 640px)" in css  # the phone breakpoint
+    assert b"flex-wrap: nowrap" in css  # the tab row scrolls instead of stacking
+
+
 def test_item_pages_serve_the_dashboard_shell(tmp_path):
     """Every item has its own page URL: /item/<item_id> answers with the shell
     and the client opens the item view from the path."""

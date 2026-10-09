@@ -151,6 +151,14 @@ view from the URL, so item links are real, shareable pages (with the item's
 name as the document title) rather than `#` fragments. An unknown id still
 returns the shell; the page then reports that the item was never observed.
 
+The layout is responsive. On a phone (≤640px) the tab bar becomes a single
+horizontally scrollable row instead of a three-line stack, the KPI cards pair
+up, the charts lose some height, and every table scrolls **inside its card**
+(`.table-wrap`) — the columns stay `nowrap` and none of them is dropped, so the
+page itself never scrolls sideways. Before that, a wide table stretched the
+document and clipped the sticky header and every other card at the viewport
+edge. The wide-screen layout is unchanged.
+
 ## JSON API
 
 Every route below except `POST /api/snapshot` is served on the **read port**
