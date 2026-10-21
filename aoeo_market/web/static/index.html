@@ -58,7 +58,9 @@
 
 		<main>
 			<!-- Search: the landing view.  It has no loader, so opening the
-			     dashboard fetches nothing at all until the form is submitted. -->
+			     dashboard fetches no market data; typing matches the static
+			     /static/suggestions.json in the browser, and the snapshot
+			     database is read when the form is submitted. -->
 			<section id="tab-search">
 				<div class="card">
 					<h2>
@@ -69,12 +71,27 @@
 						>
 					</h2>
 					<form id="search-form" class="controls">
-						<input
-							id="search-q"
-							type="search"
-							placeholder="search id or name…"
-							autocomplete="off"
-						/>
+						<div class="search-box">
+							<input
+								id="search-q"
+								type="search"
+								placeholder="search id or name…"
+								autocomplete="off"
+								role="combobox"
+								aria-label="Search by item id or display name"
+								aria-autocomplete="list"
+								aria-haspopup="listbox"
+								aria-expanded="false"
+								aria-controls="search-suggestions"
+							/>
+							<div
+								id="search-suggestions"
+								class="suggestions"
+								role="listbox"
+								aria-label="Matching items"
+								hidden
+							></div>
+						</div>
 						<button type="submit">Search</button>
 						<span id="search-summary" class="muted"></span>
 					</form>

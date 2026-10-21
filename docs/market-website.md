@@ -146,13 +146,14 @@ The intended deployment puts both components in one namespace:
 
 ## Views
 
-The dashboard opens on **Search**, which fetches nothing until its form is
-submitted; every other tab loads its data the first time it is opened, and an
-item page loads only that item.
+The dashboard opens on **Search**, which fetches no market data on arrival:
+typing matches a static catalog index in the browser, and the snapshot database
+is read when the form is submitted.  Every other tab loads its data the first
+time it is opened, and an item page loads only that item.
 
 | Tab | What it shows |
 |---|---|
-| **Search** | The landing view: one box that matches a fragment of an item id or display name against the curated catalog — so an item nobody is selling still turns up, marked *not listed* — and lists the matches with their current median unit price (or the historical median when unlisted) and active-listing count. It issues no request until the form is submitted, so arriving at the dashboard costs no API traffic. |
+| **Search** | The landing view: one box that matches a fragment of an item id or display name against the curated catalog — so an item nobody is selling still turns up, marked *not listed* — and lists the matches with their current median unit price (or the historical median when unlisted) and active-listing count. While the user types, a suggestion box lists catalog matches (name, type, rarity) and can be driven with the arrow keys and Enter. The matching happens entirely in the browser against one compact catalog index (`/static/suggestions.json`), so a keystroke makes no API request and never touches the snapshot database; submitting the form is what reads market data. |
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, the fastest sellers by median time-to-sale, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell, omitting items with too few observed sales to rank. Orderable by median/min/max time, sales count, rarity, current price and more. The fastest are charted on the **Overview** tab. |
@@ -283,6 +284,11 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   below cost *and* not listed, where there is nothing to buy and nothing worth
   crafting: an unlisted item stays only while its historical median still beats
   its crafting cost.  Best and worst are the same ranking read from either end.
+- **Search suggestions** — the search box's type-ahead is also front-end only:
+  `aoeo_market/web/static/suggestions.json` carries every catalog item's id,
+  name, type, kind, icon, rarity and craftability, generated and committed by
+  `python -m scripts.build_suggestions`. The browser fetches it once and mirrors
+  `catalog.search`'s ranking locally, so keystrokes never query DuckDB.
 - **Item icons** — the item page shows the item's icon clipped in the browser
   from a sprite sheet via CSS `background-position`, exactly as celeste-search
   renders it (all sprite work is client-side).  The position index
@@ -391,6 +397,10 @@ than asking the API to re-sort on every column click:
   opening both tabs costs one request.
 - The listings filter box is debounced by 120 ms: without it each keystroke
   rebuilt the whole table of ~1,800 rows.
+- The search box's type-ahead runs in the browser: `/static/suggestions.json` is
+  fetched once (on focus, before the first keystroke), then every query is a
+  local match with the same ranking as `/api/search`. Typing therefore makes no
+  API request, and the snapshot database is read by the submitted search only.
 - The sort key is computed once per row instead of once per comparison.
 
 The API still accepts `order`/`dir`, so other consumers are unaffected; the

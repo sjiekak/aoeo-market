@@ -267,8 +267,8 @@ function orderQuery(order, dir) {
 // needs one view — the landing search, or an item page — never pays for the
 // others. The loaders are function declarations, so referring to them here is
 // safe even though they are defined further down.  "search" is deliberately
-// absent: it is the landing view and fetches nothing until its form is
-// submitted.
+// absent: it is the landing view, fetches nothing on arrival, and reads market
+// data only when its form is submitted.
 const TAB_LOADERS = {
 	overview: loadOverview,
 	listings: loadListings,
@@ -311,8 +311,9 @@ document.querySelectorAll("nav button").forEach((b) => {
 
 /* --- search (the landing view) ------------------------------------------- */
 
-// The only view that is useful empty: it runs entirely on submit, so opening
-// the dashboard costs no API traffic at all.
+// The only view that is useful empty: opening the dashboard costs no market
+// data at all, and typing matches the static catalog index in the browser.
+// Only the submitted search reads the snapshot database.
 const renderSearch = (rows) =>
 	rows
 		.map(
@@ -329,6 +330,233 @@ const renderSearch = (rows) =>
       </tr>`,
 		)
 		.join("");
+
+/* --- search suggestions (the type-ahead) --------------------------------- */
+
+// The type-ahead runs entirely in the browser: /static/suggestions.json is a
+// compact index generated from the curated catalog (scripts/build_suggestions.py)
+// and loaded once, then every keystroke is a local ranked match.  Nothing here
+// asks the server, so typing never touches the snapshot database.
+const SUGGEST_LIMIT = 8;
+const SUGGEST_INDEX_URL = "/static/suggestions.json";
+
+const searchInput = $("#search-q");
+const suggestionList = $("#search-suggestions");
+const suggest = { items: [], active: -1, seq: 0, index: null, load: null, failed: false };
+
+function loadSuggestionIndex() {
+	if (suggest.index) return Promise.resolve(suggest.index);
+	if (suggest.failed) return Promise.resolve([]);
+	if (!suggest.load) {
+		suggest.load = fetch(SUGGEST_INDEX_URL)
+			.then((r) => {
+				if (!r.ok) throw new Error(`HTTP ${r.status}`);
+				return r.json();
+			})
+			.then((rows) => {
+				// Lowercase the matchable text once, not once per keystroke.
+				suggest.index = rows.map((row) => ({
+					...row,
+					matchId: String(row.item_id).toLowerCase(),
+					matchName: String(row.name || "").toLowerCase(),
+				}));
+				return suggest.index;
+			})
+			.catch(() => {
+				suggest.failed = true;
+				return [];
+			});
+	}
+	return suggest.load;
+}
+
+// Mirrors catalog.search: exact id, then id prefix, then name prefix, then any
+// other substring, id-ordered within a rank (the index is already id-sorted).
+function matchSuggestions(needle) {
+	const q = needle.toLowerCase();
+	const ranked = [];
+	for (const row of suggest.index || []) {
+		let rank;
+		if (q === row.matchId) rank = 0;
+		else if (row.matchId.startsWith(q)) rank = 1;
+		else if (row.matchName.startsWith(q)) rank = 2;
+		else if (row.matchId.includes(q) || row.matchName.includes(q)) rank = 3;
+		else continue;
+		ranked.push([rank, row]);
+	}
+	ranked.sort(
+		(a, b) =>
+			a[0] - b[0] ||
+			(a[1].matchId < b[1].matchId
+				? -1
+				: Number(a[1].matchId > b[1].matchId)),
+	);
+	return ranked.slice(0, SUGGEST_LIMIT).map(([, row]) => row);
+}
+
+function highlightMatch(text, needle) {
+	const value = String(text ?? "");
+	const at = value.toLowerCase().indexOf(needle.toLowerCase());
+	if (at < 0) return esc(value);
+	return (
+		esc(value.slice(0, at)) +
+		`<mark>${esc(value.slice(at, at + needle.length))}</mark>` +
+		esc(value.slice(at + needle.length))
+	);
+}
+
+function suggestionHtml(item, index, needle) {
+	const name = item.name || item.item_id;
+	const meta = [item.name ? item.item_id : null, item.type]
+		.filter(Boolean)
+		.map(esc)
+		.join(" · ");
+	return `<div id="search-suggestion-${index}" class="suggestion" role="option" aria-selected="false" data-index="${index}">
+        ${itemIconHtml(item.kind, item.icon)}
+        <span class="suggestion-text">
+          <span class="suggestion-name">${highlightMatch(name, needle)}</span>
+          ${meta ? `<span class="suggestion-sub">${meta}</span>` : ""}
+        </span>
+        <span class="suggestion-tags">${rarityTag(item)}</span>
+      </div>`;
+}
+
+function hideSuggestions() {
+	suggestionList.hidden = true;
+	suggestionList.innerHTML = "";
+	suggest.items = [];
+	suggest.active = -1;
+	searchInput.setAttribute("aria-expanded", "false");
+	searchInput.removeAttribute("aria-activedescendant");
+}
+
+function showSuggestionMessage(message) {
+	suggest.items = [];
+	suggest.active = -1;
+	suggestionList.innerHTML = `<div class="suggestion-none" role="presentation">${esc(message)}</div>`;
+	suggestionList.hidden = false;
+	searchInput.setAttribute("aria-expanded", "true");
+	searchInput.removeAttribute("aria-activedescendant");
+}
+
+function showSuggestions(items, needle) {
+	suggest.items = items;
+	suggest.active = -1;
+	if (!items.length) {
+		showSuggestionMessage(`no catalog item matches “${needle}”`);
+		return;
+	}
+	suggestionList.innerHTML = items
+		.map((item, i) => suggestionHtml(item, i, needle))
+		.join("");
+	suggestionList.hidden = false;
+	searchInput.setAttribute("aria-expanded", "true");
+	searchInput.removeAttribute("aria-activedescendant");
+}
+
+function setActiveSuggestion(index) {
+	suggest.active = index;
+	const options = suggestionList.querySelectorAll('[role="option"]');
+	options.forEach((option, i) => {
+		const active = i === index;
+		option.classList.toggle("active", active);
+		option.setAttribute("aria-selected", String(active));
+	});
+	const active = options[index];
+	if (active) {
+		searchInput.setAttribute("aria-activedescendant", active.id);
+		active.scrollIntoView({ block: "nearest" });
+	} else {
+		searchInput.removeAttribute("aria-activedescendant");
+	}
+}
+
+function moveActiveSuggestion(step) {
+	const count = suggest.items.length;
+	if (!count) return;
+	const next =
+		suggest.active < 0
+			? step > 0
+				? 0
+				: count - 1
+			: (suggest.active + step + count) % count;
+	setActiveSuggestion(next);
+}
+
+function chooseSuggestion(index) {
+	const item = suggest.items[index];
+	if (!item) return;
+	hideSuggestions();
+	// Suggestions are real pages, like every other item link in the dashboard.
+	window.location.href = itemHref(item.item_id);
+}
+
+async function updateSuggestions() {
+	const needle = searchInput.value.trim();
+	suggest.seq += 1;
+	hideSuggestions();
+	if (!needle) return;
+	const seq = suggest.seq;
+	// The index is fetched on focus, so this note only shows on the first
+	// keystroke when the download has not finished yet.
+	if (!suggest.index && !suggest.failed) {
+		showSuggestionMessage("loading item suggestions…");
+	}
+	await loadSuggestionIndex();
+	if (seq !== suggest.seq || searchInput.value.trim() !== needle) return;
+	if (suggest.failed) {
+		showSuggestionMessage("item suggestions are unavailable");
+		return;
+	}
+	showSuggestions(matchSuggestions(needle), needle);
+}
+
+searchInput.addEventListener("input", () => {
+	updateSuggestions().catch(() => hideSuggestions());
+});
+
+// Start the one-time download as soon as the box is focused, so it is usually
+// ready before the first keystroke.
+searchInput.addEventListener("focus", () => {
+	loadSuggestionIndex();
+});
+
+searchInput.addEventListener("keydown", (e) => {
+	if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+		if (!suggest.items.length) return;
+		e.preventDefault();
+		moveActiveSuggestion(e.key === "ArrowDown" ? 1 : -1);
+	} else if (e.key === "Enter") {
+		if (suggest.active >= 0) {
+			e.preventDefault();
+			chooseSuggestion(suggest.active);
+		}
+	} else if (e.key === "Escape") {
+		if (!suggestionList.hidden) {
+			e.preventDefault();
+			hideSuggestions();
+		}
+	} else if (e.key === "Tab") {
+		hideSuggestions();
+	}
+});
+
+// mousedown rather than click: preventing the default keeps the focus in the
+// input, so the box is still open when the click lands on an option.
+suggestionList.addEventListener("mousedown", (e) => e.preventDefault());
+suggestionList.addEventListener("click", (e) => {
+	const option = e.target.closest('[role="option"]');
+	if (option) chooseSuggestion(Number(option.dataset.index));
+});
+suggestionList.addEventListener("mousemove", (e) => {
+	const option = e.target.closest('[role="option"]');
+	if (!option) return;
+	const index = Number(option.dataset.index);
+	if (index !== suggest.active) setActiveSuggestion(index);
+});
+document.addEventListener("pointerdown", (e) => {
+	if (!e.target.closest(".search-box")) hideSuggestions();
+});
 
 async function runSearch(query) {
 	const q = query.trim();
@@ -350,7 +578,8 @@ async function runSearch(query) {
 
 document.querySelector("#search-form").addEventListener("submit", (e) => {
 	e.preventDefault();
-	runSearch($("#search-q").value).catch((err) => {
+	hideSuggestions();
+	runSearch(searchInput.value).catch((err) => {
 		$("#search-summary").textContent = err.message;
 	});
 });
