@@ -289,30 +289,25 @@
 			<section id="tab-best-value" hidden>
 				<div class="card">
 					<h2>
-						Craftable items by market price ÷ crafting cost
-						<span class="muted"
-							>(above 1× an item sells for more than its ingredients cost —
-							buy the materials, craft it, sell it; below 1× the item itself
-							is the cheaper way to get it)</span
-						>
+						Best value
+						<span class="muted">(craftable items, per unit)</span>
 					</h2>
-					<p>
-						<label for="value-view" class="muted">View</label>
-						<select id="value-view">
-							<option value="desc">Best value — sells above cost</option>
-							<option value="asc">Worst value — sells below cost</option>
+					<div class="controls">
+						<label for="value-definition" class="muted">Definition</label>
+						<select id="value-definition">
+							<option value="crafting">Crafting value — sells above cost</option>
+							<option value="deals">Crafted deals — sells below cost</option>
+							<option value="discount">
+								Historical discount — cheaper than usual
+							</option>
 						</select>
-						<span class="muted"
-							>· prices are per unit; a row with no current listing uses its
-							historical median and is marked "not listed" — one that sells
-							below cost <em>and</em> has no listing is left out, since
-							there is nothing to buy and nothing worth crafting</span
-						>
-					</p>
-					<p class="muted">
-						Click a column header to order: min first (↑), then max (↓), then
-						unsorted — the view selector is the default ratio ordering.
-					</p>
+					</div>
+					<p
+						id="value-definition-text"
+						class="definition muted"
+						aria-live="polite"
+						hidden
+					></p>
 					<div class="table-wrap">
 						<table>
 							<thead>
@@ -330,8 +325,20 @@
 									<th class="num">
 										<button type="button" data-order="price">Price/unit</button>
 									</th>
+									<th class="num" title="Typical unit price">
+										<button type="button" data-order="median_unit_price">
+											Usual/unit
+										</button>
+									</th>
 									<th class="num">
-										<button type="button" data-order="value_ratio">Value</button>
+										<button
+											type="button"
+											data-order="value_ratio"
+											id="value-metric"
+											title="What it sells for compared with its ingredient cost"
+										>
+											Value
+										</button>
 									</th>
 									<th class="num">
 										<button type="button" data-order="listed_now">

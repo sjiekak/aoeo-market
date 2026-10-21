@@ -968,12 +968,54 @@ const bestSort = wireColumnSort("best-sellers", {
 	apply: renderBestSellers,
 });
 
-/* --- best value (crafting) ----------------------------------------------- */
+/* --- best value (craftable items) ---------------------------------------- */
 
 // value_ratio = unit price / crafting cost, so 2× means the item sells for
 // twice what its ingredients cost to buy.
 const fmtRatio = (r) =>
 	r == null ? "—" : (r >= 10 ? r.toFixed(0) : r.toFixed(1)) + "×";
+// A historical discount is a fraction of the item's own median (0.25 -> 25%).
+const fmtDiscount = (d) => {
+	if (d == null) return "—";
+	const pct = d * 100;
+	return `${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%`;
+};
+
+// The ways to read the same craftable rows.  Each definition filters the cache
+// and picks its own metric and default ordering; the API still returns the
+// ratio for all of them, and the discount is derived in the browser.
+const VALUE_DEFINITIONS = {
+	crafting: {
+		metric: "value_ratio",
+		dir: "desc",
+		column: "Value",
+		columnTitle: "What it sells for compared with its ingredient cost",
+		empty: "no craftable item currently sells for more than its ingredients cost",
+		description:
+			"What the item sells for compared with what its ingredients cost. When it sells for more, buying the materials and crafting pays; when it sells for less, the finished item is the cheaper buy. Prices are per unit; an item with no current listing uses its usual price and is marked not listed.",
+		filter: (r) => r.value_ratio > 1,
+	},
+	deals: {
+		metric: "value_ratio",
+		dir: "asc",
+		column: "Value",
+		columnTitle: "What it sells for compared with its ingredient cost",
+		empty: "no craftable item is currently selling for less than its ingredients cost",
+		description:
+			"Craftable items currently selling for less than their ingredients cost — buying the finished item is cheaper than crafting it. Best saving first.",
+		filter: (r) => r.value_ratio < 1,
+	},
+	discount: {
+		metric: "discount",
+		dir: "desc",
+		column: "Cheaper by",
+		columnTitle: "How much cheaper than usual",
+		empty: "no craftable item is currently cheaper than usual",
+		description:
+			"Craftable items currently listed for less than they usually sell for. Only items cheaper than usual are shown.",
+		filter: (r) => r.discount > 0,
+	},
+};
 
 // One accessor per sortable column, mirroring the ordering the API applies.
 const VALUE_SORTS = {
@@ -982,19 +1024,35 @@ const VALUE_SORTS = {
 	rarity: (r) => r.rarity_rank,
 	craft_cost: (r) => r.craft_cost,
 	price: (r) => r.price,
+	median_unit_price: (r) => r.median_unit_price,
 	value_ratio: (r) => r.value_ratio,
+	discount: (r) => r.discount,
 	listed_now: (r) => r.listed_now,
 };
 
 let valueCache = [];
+let valueDefinition = "crafting";
+
+// Only a currently listed item has a current price to compare with its median.
+function discountOf(row) {
+	const current = row.current_median_unit_price;
+	const historical = row.median_unit_price;
+	if (!row.listed_now || current == null || !(historical > 0)) return null;
+	return 1 - current / historical;
+}
 
 function renderBestValue() {
+	const definition = VALUE_DEFINITIONS[valueDefinition];
 	const rows = sortedRows(
-		valueCache,
+		valueCache.filter(definition.filter),
 		valueSort.order,
 		valueSort.dir,
 		VALUE_SORTS,
 	);
+	const value = (r) =>
+		definition.metric === "discount"
+			? fmtDiscount(r.discount)
+			: fmtRatio(r.value_ratio);
 	$("#value-body").innerHTML =
 		rows
 			.map(
@@ -1004,18 +1062,22 @@ function renderBestValue() {
         <td>${rarityTag(r)}</td>
         <td class="num">${fmtPrice(r.craft_cost)}</td>
         <td class="num" title="${esc(r.listed_now ? "current median" : "historical median")}">${fmtPrice(r.price)}</td>
-        <td class="num"><b>${fmtRatio(r.value_ratio)}</b></td>
+        <td class="num" title="historical median">${fmtPrice(r.median_unit_price)}</td>
+        <td class="num"><b>${value(r)}</b></td>
         <td class="num">${r.listed_now ? fmtInt(r.active_count) : '<span class="muted">not listed</span>'}</td>
       </tr>`,
 			)
 			.join("") ||
-		'<tr><td colspan="7" class="muted">no craftable item has been observed yet</td></tr>';
+		`<tr><td colspan="8" class="muted">${esc(definition.empty)}</td></tr>`;
 }
 
-// One request feeds the whole tab; best/worst and every column header re-sort
-// the cached rows instead of re-querying the API.
+// One request feeds the whole tab; the definition and every column header
+// re-sort the cached rows instead of re-querying the API.
 async function loadBestValueTab() {
-	valueCache = await api("/api/best-value");
+	valueCache = (await api("/api/best-value")).map((row) => ({
+		...row,
+		discount: discountOf(row),
+	}));
 	renderBestValue();
 }
 
@@ -1025,13 +1087,28 @@ const valueSort = wireColumnSort("best-value", {
 	apply: renderBestValue,
 });
 
-// Best/worst is only the direction of the ratio ordering; a column header
-// click takes over from there.
-$("#value-view").addEventListener("change", () => {
-	valueSort.order = "value_ratio";
-	valueSort.dir = $("#value-view").value;
+// Point the metric header at the selected definition.  Its data-order changes
+// with it, so a header click sorts the same number the column shows.
+function applyValueDefinition() {
+	const definition = VALUE_DEFINITIONS[valueDefinition];
+	const metric = $("#value-metric");
+	metric.dataset.order = definition.metric;
+	metric.textContent = definition.column;
+	metric.title = definition.columnTitle;
+	valueSort.order = definition.metric;
+	valueSort.dir = definition.dir;
 	valueSort.sync();
 	renderBestValue();
+}
+
+$("#value-definition").addEventListener("change", (e) => {
+	valueDefinition = e.target.value;
+	applyValueDefinition();
+	// The explanation appears only after the visitor interacts, so the tab
+	// opens as a table rather than a wall of text.
+	const text = $("#value-definition-text");
+	text.textContent = VALUE_DEFINITIONS[valueDefinition].description;
+	text.hidden = false;
 });
 
 /* --- not on sale --------------------------------------------------------- */
