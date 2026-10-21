@@ -440,6 +440,16 @@ tbody tr:hover {
 	border-radius: 6px;
 }
 
+/* The selected best-value definition's explanation: hidden until the visitor
+   changes the definition, so the tab opens as a table, not a wall of text. */
+.definition {
+	margin: 0 0 16px;
+	padding: 10px 12px;
+	border-left: 3px solid var(--accent);
+	border-radius: 8px;
+	background: var(--panel-2);
+}
+
 .item-head {
 	display: flex;
 	align-items: flex-start;
@@ -656,9 +666,8 @@ footer .notice a:focus-visible {
 		flex: 1 1 auto;
 		max-width: 100%;
 	}
-	/* the best-value "View" selector sits mid-sentence; on a phone it gets its
-	   own line instead of breaking the paragraph around it */
-	#value-view {
+	/* the best-value definition selector gets its own line on a phone */
+	#value-definition {
 		width: 100%;
 		margin: 6px 0;
 	}

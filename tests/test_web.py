@@ -128,6 +128,28 @@ def test_search_box_offers_front_end_type_ahead(tmp_path):
     assert b"ArrowDown" in js and b"aria-activedescendant" in js
 
 
+def test_best_value_explains_a_definition_only_after_a_choice(tmp_path):
+    """The tab opens as a table; the selected definition's text stays hidden
+    until the visitor changes the selector."""
+    app = app_for(tmp_path)
+    _, _, html = app.handle("/")
+    _, _, js = app.handle("/static/app.js")
+
+    assert b'id="value-definition"' in html
+    for option in (b"Crafting value", b"Crafted deals", b"Historical discount"):
+        assert option in html
+    assert b"cheaper than usual" in html
+    assert b'id="value-view"' not in html  # the old direction-only selector
+    definition_text = html.split(b'id="value-definition-text"', 1)[1].split(b">", 1)[0]
+    assert b"hidden" in definition_text
+
+    assert b"VALUE_DEFINITIONS" in js
+    assert b"applyValueDefinition" in js
+    assert b"discountOf" in js
+    assert b'addEventListener("change"' in js
+    assert b"value-definition-text" in js
+
+
 def test_item_pages_serve_the_dashboard_shell(tmp_path):
     """Every item has its own page URL: /item/<item_id> answers with the shell
     and the client opens the item view from the path."""

@@ -157,7 +157,7 @@ time it is opened, and an item page loads only that item.
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, the fastest sellers by median time-to-sale, and the biggest median-price movers between the last two snapshots. |
 | **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
 | **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell, omitting items with too few observed sales to rank. Orderable by median/min/max time, sales count, rarity, current price and more. The fastest are charted on the **Overview** tab. |
-| **Best value** | Craftable items ranked by **market price ÷ crafting cost**: above 1× an item sells for more than its ingredients cost — buy the materials, craft it, sell it — and below 1× the item itself is the cheaper way to get it. A **View** selector flips between best and worst (equivalently, the ratio's direction), and an item with no current listing is priced off its historical median and marked *not listed*. Every row is actionable: an item selling below its crafting cost is only listed while it has an active listing, since otherwise there is nothing to buy and nothing worth crafting. Orderable by item, type, rarity, cost, price and ratio. |
+| **Best value** | Three definitions over the same craftable rows, chosen from a **Definition** selector: *Crafting value* (unit price ÷ crafting cost, above 1×, best first), *Crafted deals* (currently listed below the crafting cost, cheapest first), and *Historical discount* (cheaper than usual: currently listed below the item's typical price, biggest saving first). The selected definition's explanation is hidden until the selector is used, so the tab opens as a table. An item with no current listing is priced off its historical median and marked *not listed*. Orderable by item, type, rarity, cost, current price, historical median, ratio/discount and availability. |
 | **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
 | **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — a **Crafting** card (recipe materials with amounts and a cost estimate) when a design produces it, a **Dismantle** card listing the materials the Gear Dismantler yields, a median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. Material icons link to their own item page and name themselves on hover. |
@@ -214,7 +214,7 @@ with a 404 that says where it lives.
 | `GET /api/item/<item_id>` | the item's curated identity (name, kind, icon, rarity), its current listings and its previous (vanished) listings as full listing rows with the EXPIRED vs REMOVED classification, the price history (`series`, `points`), plus `recipe` (ingredients with quantities, per-unit prices and a `cost` estimate) and `dismantle` (the Gear Dismantler output for the item's type and rarity) — each omitted when unknown |
 | `GET /api/not-on-sale?order=&dir=` | historical items with no active listing right now |
 | `GET /api/best-sellers?order=&dir=&min_sales=` | items ranked by observed time-to-sale (fastest first by default) |
-| `GET /api/best-value?order=&dir=` | craftable items ranked by `value_ratio` = unit price ÷ crafting cost; descending is best value (sells above cost), ascending is worst |
+| `GET /api/best-value?order=&dir=` | craftable items with `value_ratio` = unit price ÷ crafting cost (descending is best value); the dashboard's three definitions filter and re-sort this one response in the browser |
 | `GET /api/recently-removed?window=` | listings that vanished between the last two snapshots (default), or within the last `window` seconds |
 | `POST /api/snapshot` | append one snapshot — served on the write port only; body `{"listings": [<Listing.to_dict()>…], "captured_at": <unix seconds, optional>}` → `{"snapshot_id": id, "listings": n}`; the server computes and stores each absolute `expires_at` from the posted countdown |
 
@@ -272,18 +272,23 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   completion reward* gear, so an excluded item reports no dismantle output at
   all; only the event class is reliably detectable from the curated catalog
   today (`catalog.is_dismantlable`), which is the rule applied for now.
-- **Best value (crafting)** — the best-value tab ranks the craftable items we
-  have observed by `value_ratio` = the item's unit price ÷ what its recipe's
-  ingredients cost at their own unit prices, so above 1 it pays to craft and
-  below 1 it pays to buy the item.  Both sides are per unit and priced the way
-  the item page prices an ingredient: current median while listed now, else the
-  historical median — `listed_now`/`price_basis` say which, because an item with
-  no current listing has no live competition.  Items whose ingredients have not
-  all been observed are left out: a partial cost would understate the cost and
-  inflate the ratio.  So is the one combination that suits nobody — selling
-  below cost *and* not listed, where there is nothing to buy and nothing worth
-  crafting: an unlisted item stays only while its historical median still beats
-  its crafting cost.  Best and worst are the same ranking read from either end.
+- **Best value (craftable items)** — the tab reads one `/api/best-value`
+  response and offers three definitions over the same rows. *Crafting value* is
+  `value_ratio` = the item's unit price ÷ what its recipe's ingredients cost at
+  their own unit prices; above 1× it pays to craft and below 1× it pays to buy
+  the item. *Crafted deals* keeps the rows currently listed below their
+  crafting cost and orders them cheapest first. *Historical discount* keeps
+  currently listed items priced below their own historical median (their usual
+  price) and orders them by how much cheaper than usual they are. Both sides
+  are per unit and priced the way the item page prices an ingredient: current
+  median while listed now, else the historical median —
+  `listed_now`/`price_basis` say which, because an item
+  with no current listing has no live competition.  Items whose ingredients
+  have not all been observed are left out: a partial cost would understate the
+  cost and inflate the ratio.  So is the one combination that suits nobody —
+  selling below cost *and* not listed, where there is nothing to buy and
+  nothing worth crafting.  The definition's explanation appears only after a
+  visitor changes the selector.
 - **Search suggestions** — the search box's type-ahead is also front-end only:
   `aoeo_market/web/static/suggestions.json` carries every catalog item's id,
   name, type, kind, icon, rarity and craftability, generated and committed by
@@ -392,6 +397,9 @@ than asking the API to re-sort on every column click:
   columns, nulls last in ascending order), so it costs no round trip — best
   sellers used to issue a fresh request for every header click and could issue
   two when the tab opened.
+- The best-value tab derives the historical discount and applies the selected
+  definition's filter to that same cached array, so changing definitions costs
+  no request either.
 - The fastest-sellers chart on the Overview tab is derived from the same
   memoized best-sellers response as the table, so the two never disagree and
   opening both tabs costs one request.
