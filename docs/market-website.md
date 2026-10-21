@@ -287,7 +287,7 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
 - **Search suggestions** — the search box's type-ahead is also front-end only:
   `aoeo_market/web/static/suggestions.json` carries every catalog item's id,
   name, type, kind, icon, rarity and craftability, generated and committed by
-  `scripts/build_suggestions.py`. The browser fetches it once and mirrors
+  `python -m scripts.build_suggestions`. The browser fetches it once and mirrors
   `catalog.search`'s ranking locally, so keystrokes never query DuckDB.
 - **Item icons** — the item page shows the item's icon clipped in the browser
   from a sprite sheet via CSS `background-position`, exactly as celeste-search

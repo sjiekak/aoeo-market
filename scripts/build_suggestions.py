@@ -12,10 +12,11 @@ rarity, craftability) and the rows are sorted by id, so the generated file is
 deterministic and diff-friendly.  It is committed alongside the dashboard,
 like ``sprites.json``; refresh it whenever the catalog changes::
 
-    uv run python scripts/build_suggestions.py
+    uv run python -m scripts.build_suggestions
 
-Only the committed catalog is read — the gitignored ``ProjectCeleste`` tree is
-not needed.
+Run that from the repository root so ``aoeo_market`` is importable.  Only the
+committed catalog is read — the gitignored ``ProjectCeleste`` tree is not
+needed.
 """
 
 from __future__ import annotations
@@ -24,9 +25,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
-# Run from the repository root without installing the package.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from aoeo_market import catalog
 
