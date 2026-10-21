@@ -81,6 +81,8 @@ aoeo_market/
 scripts/
   build_catalog.py  regenerate aoeo_market/data/catalog.json from the
                   ProjectCeleste/celeste-search item database (maintenance tool)
+  build_suggestions.py  regenerate the dashboard's browser-side type-ahead
+                  index (aoeo_market/web/static/suggestions.json)
 tests/            unit tests (no captures needed)
 tests/capture/    capture-dependent tests + reference data — local-only,
                   gitignored along with the .pcapng captures

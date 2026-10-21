@@ -112,6 +112,31 @@ def craftable_ids() -> list[str]:
     return [key for key, entry in _load().items() if entry.get("recipe")]
 
 
+def suggestion_index() -> list[dict]:
+    """Every catalog item as a compact row for the dashboard's type-ahead.
+
+    The web app loads this list once from ``/static/suggestions.json`` (see
+    ``scripts/build_suggestions.py``) and matches it in the browser, so typing
+    never asks the server at all.  Rows carry only the fields a suggestion
+    shows, and the ids are sorted so the committed asset is deterministic.
+    """
+    catalog = _load()
+    out: list[dict] = []
+    for key in sorted(catalog):
+        entry = catalog[key]
+        row: dict = {"item_id": key, "name": entry.get("name")}
+        for field in ("type", "kind", "icon"):
+            if entry.get(field) is not None:
+                row[field] = entry[field]
+        rarity = rarity_of(key)
+        if rarity:
+            row["rarity"] = rarity[1]
+        if entry.get("craftable"):
+            row["craftable"] = True
+        out.append(row)
+    return out
+
+
 def search(query: str, limit: int = 25) -> list[dict]:
     """Entries whose wire id or display name contains ``query``.
 

@@ -115,6 +115,19 @@ def test_dashboard_shell_is_mobile_ready(tmp_path):
     assert b"MutationObserver" in js  # rows rebuilt by a render are re-captioned
 
 
+def test_search_box_offers_front_end_type_ahead(tmp_path):
+    """The search box is a combobox whose choices are matched in the browser."""
+    app = app_for(tmp_path)
+    _, _, html = app.handle("/")
+    _, _, js = app.handle("/static/app.js")
+    assert b'id="search-suggestions"' in html and b'role="listbox"' in html
+    assert b'role="combobox"' in html and b'aria-controls="search-suggestions"' in html
+    assert b'addEventListener("input"' in js  # choices follow the typing
+    assert b"/static/suggestions.json" in js  # the one-time catalog index
+    assert b"/api/suggest" not in js  # matching does not ask the server
+    assert b"ArrowDown" in js and b"aria-activedescendant" in js
+
+
 def test_item_pages_serve_the_dashboard_shell(tmp_path):
     """Every item has its own page URL: /item/<item_id> answers with the shell
     and the client opens the item view from the path."""

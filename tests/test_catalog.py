@@ -112,6 +112,40 @@ def test_search_ranks_exact_ids_first():
     assert len(catalog.search("arrow", limit=4)) == 4
 
 
+def test_suggestion_index_holds_the_front_end_rows():
+    """The browser matches this list, so it needs identity and nothing else."""
+    rows = catalog.suggestion_index()
+    assert len(rows) > 3000
+    assert [r["item_id"] for r in rows] == sorted(r["item_id"] for r in rows)
+    assert all("listed_now" not in r and "current_median_unit_price" not in r for r in rows)
+
+    rows_by_id = {r["item_id"]: r for r in rows}
+    fox = rows_by_id["4arcticfoxfur"]
+    assert fox["name"] == "Arctic Fox Furs"
+    assert fox["kind"] == "material"
+    assert fox["rarity"] == "Epic"
+    assert fox["icon"]
+    assert fox["craftable"] is True
+    # absent catalog extras are omitted, not emitted as nulls
+    assert "craftable" not in rows_by_id["xerxes_l_iv"]
+
+
+def test_suggestion_index_is_in_sync_with_the_catalog():
+    """The committed browser index is what the catalog would generate today.
+
+    The dashboard fetches ``/static/suggestions.json`` once and matches it
+    locally; running ``scripts/build_suggestions.py`` after a catalog change
+    keeps the two in step.
+    """
+    catalog_path = Path(catalog.__file__).with_name("data") / "catalog.json"
+    index_path = Path(__file__).resolve().parents[1] / "aoeo_market" / "web" / "static" / "suggestions.json"
+    data = json.loads(catalog_path.read_text(encoding="utf-8"))
+    committed = json.loads(index_path.read_text(encoding="utf-8"))
+
+    assert [r["item_id"] for r in committed] == sorted(data)
+    assert committed == catalog.suggestion_index()
+
+
 def test_sprite_index_covers_every_catalog_icon():
     """Every catalog (kind, icon) resolves in the front-end sprite index.
 
