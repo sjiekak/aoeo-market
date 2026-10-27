@@ -120,24 +120,10 @@ function rarityTag(row) {
 }
 
 // Seasonal events are referred to by short codes: Summer Event = SE,
-// Halloween Event = HE, Winter Event = WE.  Only /api/listings carries the
-// catalog's event field; the other views carry just the item id, so the
-// browser resolves it from one compact static index (built by
-// scripts/build_events.py) and, for ids the index has not seen, from the id.
+// Halloween Event = HE, Winter Event = WE.  The API resolves the event for
+// every item row, so the browser only maps its name to the short code and
+// filters the cached rows.
 const EVENT_ACRONYMS = { summer: "SE", halloween: "HE", winter: "WE" };
-const EVENT_INDEX_URL = "/static/events.json";
-
-let eventIndex = null;
-let eventIndexPromise = null;
-
-function loadEventIndex() {
-	if (eventIndexPromise) return eventIndexPromise;
-	eventIndexPromise = fetch(EVENT_INDEX_URL)
-		.then((r) => (r.ok ? r.json() : {}))
-		.then((index) => (eventIndex = index || {}))
-		.catch(() => (eventIndex = {}));
-	return eventIndexPromise;
-}
 
 function eventAcronym(event) {
 	if (!event) return "";
@@ -152,55 +138,11 @@ function eventName(event) {
 	return `${name[0].toUpperCase()}${name.slice(1)} Event`;
 }
 
-const EVENT_ID_TOKENS = { se: "summer", he: "halloween", we: "winter" };
-const EVENT_WORDS = ["halloween", "summer", "winter"];
-
-// Mirrors scripts/build_events.py for ids the static index has never seen:
-// SE2025_…, HE_…, WE_…, …Halloween2020, …Winter2021, …IceKing… .
-function eventFromId(itemId) {
-	const text = String(itemId || "").toLowerCase();
-	let name = "";
-	let year = null;
-	for (const token of text.split(/[^a-z0-9]+/)) {
-		if (!token) continue;
-		if (EVENT_ID_TOKENS[token]) {
-			name = EVENT_ID_TOKENS[token];
-			break;
-		}
-		const acronym = token.match(/^(se|he|we)(\d{4})$/);
-		if (acronym) {
-			name = EVENT_ID_TOKENS[acronym[1]];
-			year = Number(acronym[2]);
-			break;
-		}
-		for (const word of EVENT_WORDS) {
-			if (token.startsWith(word)) {
-				name = word;
-				const tail = token.slice(word.length);
-				if (/^\d{4}$/.test(tail)) year = Number(tail);
-				break;
-			}
-		}
-		if (name) break;
-	}
-	if (!name && text.includes("iceking")) name = "winter";
-	if (!name) return null;
-	const event = { name };
-	if (year) event.year = year;
-	return event;
-}
-
-// The event for one row: the static index first (it covers catalog items whose
-// ids do not encode the event), then any event field the API sent, then the id.
+// The event the backend attached to a row, with its short code for display.
 function eventOf(row) {
-	if (!row) return null;
-	const indexed =
-		eventIndex && eventIndex[String(row.item_id || "").toLowerCase()];
-	if (indexed && indexed.name) return indexed;
-	if (row.event && row.event.name) {
-		return { ...row.event, acronym: eventAcronym(row.event) };
-	}
-	return eventFromId(row.item_id);
+	const event = row?.event;
+	if (!event?.name) return null;
+	return { ...event, acronym: eventAcronym(event) };
 }
 
 // The event as it appears beside an item name: its acronym and year (SE 2025),
@@ -947,7 +889,7 @@ const listingSort = wireColumnSort("listings", {
 });
 
 async function loadListings() {
-	const [rows] = await Promise.all([api("/api/listings"), loadEventIndex()]);
+	const rows = await api("/api/listings");
 	listingsCache = rows;
 	const types = [...new Set(listingsCache.map((l) => l.item_type))].sort();
 	const sel = $("#ls-type");
@@ -1094,7 +1036,7 @@ function renderBestSellers() {
 // every header click. The response is memoized per URL, so an already-loaded
 // Overview tab costs no second request.
 async function loadBestSellersTab() {
-	const [rows] = await Promise.all([api(BEST_SELLERS_URL), loadEventIndex()]);
+	const rows = await api(BEST_SELLERS_URL);
 	bestSellerCache = rows;
 	populateEventSelect($("#bs-event"), bestSellerCache);
 	renderBestSellers();
@@ -1218,7 +1160,7 @@ function renderBestValue() {
 // One request feeds the whole tab; the definition and every column header
 // re-sort the cached rows instead of re-querying the API.
 async function loadBestValueTab() {
-	const [rows] = await Promise.all([api("/api/best-value"), loadEventIndex()]);
+	const rows = await api("/api/best-value");
 	valueCache = rows.map((row) => ({
 		...row,
 		discount: discountOf(row),
@@ -1264,10 +1206,9 @@ $("#value-definition").addEventListener("change", (e) => {
 let nosCache = [];
 
 async function loadNotOnSale() {
-	const [rows] = await Promise.all([
-		api("/api/not-on-sale" + orderQuery(nosSort.order, nosSort.dir)),
-		loadEventIndex(),
-	]);
+	const rows = await api(
+		`/api/not-on-sale${orderQuery(nosSort.order, nosSort.dir)}`,
+	);
 	nosCache = rows;
 	populateEventSelect($("#nos-event"), nosCache);
 	renderNotOnSale();
@@ -1445,10 +1386,7 @@ function renderItemImage(it) {
 }
 
 async function loadItem(itemId) {
-	const [it] = await Promise.all([
-		api("/api/item/" + encodeURIComponent(itemId)),
-		loadEventIndex(),
-	]);
+	const it = await api(`/api/item/${encodeURIComponent(itemId)}`);
 	// Each item is its own page, so it gets its own document title.
 	document.title = `${it.name || it.item_id} — Merchant Zeno`;
 	$("#item-title").textContent = it.name || it.item_id;

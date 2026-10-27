@@ -22,6 +22,7 @@ fallback for ids the catalog has never seen, e.g. brand-new event items).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .market import rarity_of as _heuristic_rarity
@@ -36,6 +37,13 @@ RARITY_RANK = {
     "Epic": 4,
     "Legendary": 5,
 }
+
+# The seasonal events as the curated database names them, and the tokens the
+# game and the marketplace ids use for them.
+_EVENT_ID_TOKENS = {"se": "summer", "he": "halloween", "we": "winter"}
+_EVENT_WORDS = ("halloween", "summer", "winter")
+_EVENT_ID_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+_EVENT_ACRONYM_RE = re.compile(r"(se|he|we)(\d{4})")
 
 _CATALOG_PATH = Path(__file__).with_name("data") / "catalog.json"
 # Gear Dismantler output: a bare gear type -> tier map, each tier carrying the
@@ -73,6 +81,81 @@ def rarity_of(item_id: str) -> tuple[int, str] | None:
         if rank is not None:
             return (rank, entry["rarity"])
     return _heuristic_rarity(item_id)
+
+
+def _event_from_id(item_id: str) -> dict | None:
+    """Recover ``{name[, year]}`` from a wire id that encodes its event.
+
+    Covers ids such as ``SE2025_…``, ``HE_Blackwood``, ``WE_IceKingsHeart``,
+    ``Axe2H_Halloween2020``, ``CreateArmorBldg_Winter2021`` and
+    ``…_IceKing_LEG``.
+    """
+    text = str(item_id or "").lower()
+    name: str | None = None
+    year: int | None = None
+    for token in _EVENT_ID_SPLIT_RE.split(text):
+        if not token:
+            continue
+        if token in _EVENT_ID_TOKENS:
+            name = _EVENT_ID_TOKENS[token]
+            break
+        acronym = _EVENT_ACRONYM_RE.fullmatch(token)
+        if acronym:
+            name = _EVENT_ID_TOKENS[acronym.group(1)]
+            year = int(acronym.group(2))
+            break
+        for word in _EVENT_WORDS:
+            if token.startswith(word):
+                name = word
+                tail = token[len(word) :]
+                if len(tail) == 4 and tail.isdigit():
+                    year = int(tail)
+                break
+        if name:
+            break
+    if name is None and "iceking" in text:
+        name = "winter"
+    if name is None:
+        return None
+    event: dict = {"name": name}
+    if year is not None:
+        event["year"] = year
+    return event
+
+
+def _vanity_event(entry: dict) -> dict | None:
+    """A vanity item's name can name its event when its id does not."""
+    if entry.get("kind") != "item" or not str(entry.get("type") or "").startswith("Vanity"):
+        return None
+    name = str(entry.get("name") or "").lower()
+    for word in _EVENT_WORDS:
+        if word in name:
+            return {"name": word}
+    return None
+
+
+def event_of(item_id: str) -> dict | None:
+    """The seasonal event an item belongs to, if any.
+
+    The curated catalog's ``event`` field is authoritative.  For items whose
+    catalog entry has no event but whose wire id encodes one (e.g.
+    ``SE2025_…`` or ``CreateArmorBldg_Winter2021``), the id is parsed; event
+    vanity items named Halloween/Winter/Summer are the last fallback.  Returns
+    ``{name[, year]}`` — the shape the catalog stores — or ``None`` for
+    ordinary items.
+    """
+    entry = lookup(item_id)
+    if entry:
+        raw = entry.get("event") or {}
+        if raw.get("name"):
+            event = {"name": str(raw["name"])}
+            if isinstance(raw.get("year"), int):
+                event["year"] = raw["year"]
+            return event
+    event = _event_from_id(item_id)
+    if event is None and entry is not None:
+        event = _vanity_event(entry)
+    return event
 
 
 def name_of(item_id: str) -> str | None:
@@ -227,20 +310,22 @@ def icon_fields(item_id: str) -> dict:
 
     ``kind`` and ``icon`` are what the front end needs to clip the item's
     sprite icon; ``craftable`` rides along so every row that names an item
-    reports whether a design produces it.  Returns an empty dict when the
-    catalog does not know the item, so callers can merge it into a row without
-    a lookup round-trip elsewhere.
+    reports whether a design produces it, and ``event`` so the item-list views
+    can be filtered by seasonal event in the browser.  An unknown id still gets
+    whatever :func:`event_of` can recover from the id itself.
     """
     entry = lookup(item_id)
-    if not entry:
-        return {}
     out: dict = {}
-    if entry.get("kind") is not None:
-        out["kind"] = entry["kind"]
-    if entry.get("icon") is not None:
-        out["icon"] = entry["icon"]
-    if entry.get("craftable"):
-        out["craftable"] = True
+    if entry:
+        if entry.get("kind") is not None:
+            out["kind"] = entry["kind"]
+        if entry.get("icon") is not None:
+            out["icon"] = entry["icon"]
+        if entry.get("craftable"):
+            out["craftable"] = True
+    event = event_of(item_id)
+    if event is not None:
+        out["event"] = event
     return out
 
 
@@ -250,14 +335,18 @@ def fields(item_id: str) -> dict:
     ``name`` is always present (``None`` when unknown, so callers can fall
     back to the raw id); every other field is omitted when the catalog has no
     value for it, keeping the JSON API payloads lean.  ``craftable`` is only
-    emitted for items a design produces.
+    emitted for items a design produces, and ``event`` only for seasonal event
+    items (curated, or recovered from the id/name by :func:`event_of`).
     """
     entry = lookup(item_id)
     out: dict = {"name": entry.get("name") if entry else None}
     if entry:
-        for key in ("kind", "icon", "description", "civilization", "age", "event"):
+        for key in ("kind", "icon", "description", "civilization", "age"):
             if entry.get(key) is not None:
                 out[key] = entry[key]
         if entry.get("craftable"):
             out["craftable"] = True
+    event = event_of(item_id)
+    if event is not None:
+        out["event"] = event
     return out

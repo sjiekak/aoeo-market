@@ -501,44 +501,77 @@ def test_static_files_served_by_extension(tmp_path, monkeypatch):
 
 
 def test_event_filters_are_front_end_only(tmp_path):
-    """All four item lists filter by event in the browser.
+    """All four item lists filter the API rows in the browser by event.
 
-    The server answers only the ordinary listing/view payloads; the event
-    metadata comes from the committed ``/static/events.json`` index and the
-    filtering itself happens over the cached rows.
+    The server answers only the ordinary listing/view payloads; each row
+    carries its event, and filtering happens over the cached rows.
     """
     app = app_for(tmp_path)
     _, _, html = app.handle("/")
     _, _, js = app.handle("/static/app.js")
-    status, ctype, index = app.handle("/static/events.json")
-
-    assert status == 200 and "application/json" in ctype
-    assert b'"acronym":"SE"' in index and b'"acronym":"HE"' in index
 
     for select_id in (b"ls-event", b"bs-event", b"value-event", b"nos-event"):
         assert b'id="' + select_id + b'"' in html
-    assert b"/static/events.json" in js
-    assert b"loadEventIndex" in js and b"eventMatches" in js
+    assert b"eventMatches" in js and b"row?.event" in js
     assert b"?event=" not in js  # no event query parameter: filtering is local
+    # No per-event static index or front-end id heuristic: the API resolves it.
+    assert app.handle("/static/events.json")[0] == 404
+    assert b"loadEventIndex" not in js
+    assert b"eventFromId" not in js
 
 
-def test_event_index_is_in_sync_with_the_catalog():
-    """The committed event index is what the catalog would generate today."""
+def test_event_is_propagated_on_every_item_row(tmp_path):
+    """The backend resolves the event, so any view can filter it locally."""
     import json
-    from pathlib import Path
 
-    from scripts import build_events
+    from aoeo_market import catalog
 
-    root = Path(__file__).resolve().parents[1]
-    generated = build_events.build_index(root / "aoeo_market" / "data" / "catalog.json")
-    committed = json.loads((root / "aoeo_market" / "web" / "static" / "events.json").read_text(encoding="utf-8"))
+    db = tmp_path / "events.db"
+    recipe = catalog.recipe_of("armorbldg_winter2021") or {}
+    materials = [mk(10 + i, item_id=m["id"], item_type="Material", price=1, expiry=200_000) for i, m in enumerate(recipe.get("materials", []))]
+    event_items = [
+        mk(1, item_id="Axe2H_Halloween2020", item_type="Item", price=100, expiry=200_000),
+        mk(2, item_id="CreateArmorBldg_Winter2021", item_type="Design", price=100, expiry=200_000),
+        mk(3, item_id="armorbldg_winter2021", item_type="Item", price=2000, expiry=200_000),
+        *materials,
+    ]
+    conn = store.open_store(db)
+    # The warm-up snapshot keeps the event item out of the left-censored first
+    # one, so its disappearance counts as a fully observed sale.
+    store.record_snapshot(conn, [mk(99, item_id="Warm_U_I", price=10, expiry=200_000)], captured_at=0.0)
+    store.record_snapshot(conn, event_items, captured_at=1000.0)
+    kept = [item for item in event_items if item.item_id != "Axe2H_Halloween2020"]
+    store.record_snapshot(conn, kept, captured_at=2000.0)
+    store.record_snapshot(conn, kept, captured_at=3000.0)
+    conn.close()
+    app = WebApp(str(db))
 
-    assert committed == generated
-    assert generated["armorplt_halloween2025"] == {"name": "halloween", "year": 2025, "acronym": "HE"}
-    assert generated["se2019_armormed"]["acronym"] == "SE"
-    # Missing catalog metadata recovered from the id, and from a vanity name.
-    assert generated["createarmorbldg_winter2021"] == {"name": "winter", "year": 2021, "acronym": "WE"}
-    assert generated["vanityhelm_021"] == {"name": "halloween", "acronym": "HE"}
+    def payload(path, query=None):
+        status, _, body = app.handle(path, query or {})
+        assert status == 200, path
+        return json.loads(body)
+
+    listings = {row["item_id"]: row for row in payload("/api/listings")}
+    assert listings["CreateArmorBldg_Winter2021"]["event"] == {"name": "winter", "year": 2021}
+    assert "event" not in listings["4whitehoney"]
+
+    sellers = {row["item_id"]: row for row in payload("/api/best-sellers")}
+    assert sellers["Axe2H_Halloween2020"]["event"] == {"name": "halloween", "year": 2020}
+
+    not_on_sale = {row["item_id"]: row for row in payload("/api/not-on-sale")}
+    assert not_on_sale["Axe2H_Halloween2020"]["event"] == {"name": "halloween", "year": 2020}
+
+    removed = payload("/api/recently-removed", {"window": ["86400"]})
+    assert next(row for row in removed if row["item_id"] == "Axe2H_Halloween2020")["event"] == {"name": "halloween", "year": 2020}
+
+    values = {row["item_id"]: row for row in payload("/api/best-value")}
+    assert values["armorbldg_winter2021"]["event"] == {"name": "winter", "year": 2021}
+
+    search = payload("/api/search", {"q": ["createarmorbldg_winter2021"]})
+    assert search[0]["event"] == {"name": "winter", "year": 2021}
+
+    detail = payload("/api/item/armorbldg_winter2021")
+    assert detail["event"] == {"name": "winter", "year": 2021}
 
 
 def test_not_on_sale_endpoint(tmp_path):
