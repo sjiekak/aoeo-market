@@ -500,6 +500,47 @@ def test_static_files_served_by_extension(tmp_path, monkeypatch):
     assert app.handle("/static/sprites/missing.webp")[0] == 404
 
 
+def test_event_filters_are_front_end_only(tmp_path):
+    """All four item lists filter by event in the browser.
+
+    The server answers only the ordinary listing/view payloads; the event
+    metadata comes from the committed ``/static/events.json`` index and the
+    filtering itself happens over the cached rows.
+    """
+    app = app_for(tmp_path)
+    _, _, html = app.handle("/")
+    _, _, js = app.handle("/static/app.js")
+    status, ctype, index = app.handle("/static/events.json")
+
+    assert status == 200 and "application/json" in ctype
+    assert b'"acronym":"SE"' in index and b'"acronym":"HE"' in index
+
+    for select_id in (b"ls-event", b"bs-event", b"value-event", b"nos-event"):
+        assert b'id="' + select_id + b'"' in html
+    assert b"/static/events.json" in js
+    assert b"loadEventIndex" in js and b"eventMatches" in js
+    assert b"?event=" not in js  # no event query parameter: filtering is local
+
+
+def test_event_index_is_in_sync_with_the_catalog():
+    """The committed event index is what the catalog would generate today."""
+    import json
+    from pathlib import Path
+
+    from scripts import build_events
+
+    root = Path(__file__).resolve().parents[1]
+    generated = build_events.build_index(root / "aoeo_market" / "data" / "catalog.json")
+    committed = json.loads((root / "aoeo_market" / "web" / "static" / "events.json").read_text(encoding="utf-8"))
+
+    assert committed == generated
+    assert generated["armorplt_halloween2025"] == {"name": "halloween", "year": 2025, "acronym": "HE"}
+    assert generated["se2019_armormed"]["acronym"] == "SE"
+    # Missing catalog metadata recovered from the id, and from a vanity name.
+    assert generated["createarmorbldg_winter2021"] == {"name": "winter", "year": 2021, "acronym": "WE"}
+    assert generated["vanityhelm_021"] == {"name": "halloween", "acronym": "HE"}
+
+
 def test_not_on_sale_endpoint(tmp_path):
     _, _, body = app_for(tmp_path).handle("/api/not-on-sale", {"order": ["median_unit_price"], "dir": ["desc"]})
     assert "Axe_R_I" in body.decode()

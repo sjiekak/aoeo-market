@@ -311,6 +311,10 @@ tbody tr:hover {
 	color: #2dd4bf;
 	border-color: #2dd4bf;
 }
+.badge.event {
+	color: #f472b6;
+	border-color: #f472b6;
+}
 
 .up {
 	color: #4ade80;

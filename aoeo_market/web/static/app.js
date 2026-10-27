@@ -119,6 +119,135 @@ function rarityTag(row) {
 		.join(" ");
 }
 
+// Seasonal events are referred to by short codes: Summer Event = SE,
+// Halloween Event = HE, Winter Event = WE.  Only /api/listings carries the
+// catalog's event field; the other views carry just the item id, so the
+// browser resolves it from one compact static index (built by
+// scripts/build_events.py) and, for ids the index has not seen, from the id.
+const EVENT_ACRONYMS = { summer: "SE", halloween: "HE", winter: "WE" };
+const EVENT_INDEX_URL = "/static/events.json";
+
+let eventIndex = null;
+let eventIndexPromise = null;
+
+function loadEventIndex() {
+	if (eventIndexPromise) return eventIndexPromise;
+	eventIndexPromise = fetch(EVENT_INDEX_URL)
+		.then((r) => (r.ok ? r.json() : {}))
+		.then((index) => (eventIndex = index || {}))
+		.catch(() => (eventIndex = {}));
+	return eventIndexPromise;
+}
+
+function eventAcronym(event) {
+	if (!event) return "";
+	if (event.acronym) return event.acronym;
+	const name = String(event.name || "").toLowerCase();
+	return EVENT_ACRONYMS[name] || name.slice(0, 2).toUpperCase();
+}
+
+function eventName(event) {
+	const name = String(event?.name || "");
+	if (!name) return "";
+	return `${name[0].toUpperCase()}${name.slice(1)} Event`;
+}
+
+const EVENT_ID_TOKENS = { se: "summer", he: "halloween", we: "winter" };
+const EVENT_WORDS = ["halloween", "summer", "winter"];
+
+// Mirrors scripts/build_events.py for ids the static index has never seen:
+// SE2025_…, HE_…, WE_…, …Halloween2020, …Winter2021, …IceKing… .
+function eventFromId(itemId) {
+	const text = String(itemId || "").toLowerCase();
+	let name = "";
+	let year = null;
+	for (const token of text.split(/[^a-z0-9]+/)) {
+		if (!token) continue;
+		if (EVENT_ID_TOKENS[token]) {
+			name = EVENT_ID_TOKENS[token];
+			break;
+		}
+		const acronym = token.match(/^(se|he|we)(\d{4})$/);
+		if (acronym) {
+			name = EVENT_ID_TOKENS[acronym[1]];
+			year = Number(acronym[2]);
+			break;
+		}
+		for (const word of EVENT_WORDS) {
+			if (token.startsWith(word)) {
+				name = word;
+				const tail = token.slice(word.length);
+				if (/^\d{4}$/.test(tail)) year = Number(tail);
+				break;
+			}
+		}
+		if (name) break;
+	}
+	if (!name && text.includes("iceking")) name = "winter";
+	if (!name) return null;
+	const event = { name };
+	if (year) event.year = year;
+	return event;
+}
+
+// The event for one row: the static index first (it covers catalog items whose
+// ids do not encode the event), then any event field the API sent, then the id.
+function eventOf(row) {
+	if (!row) return null;
+	const indexed =
+		eventIndex && eventIndex[String(row.item_id || "").toLowerCase()];
+	if (indexed && indexed.name) return indexed;
+	if (row.event && row.event.name) {
+		return { ...row.event, acronym: eventAcronym(row.event) };
+	}
+	return eventFromId(row.item_id);
+}
+
+// The event as it appears beside an item name: its acronym and year (SE 2025),
+// with the full event name in the tooltip.  Nothing for ordinary items.
+function eventTag(event) {
+	if (!event?.name) return "";
+	const label = [eventAcronym(event), event.year].filter(Boolean).join(" ");
+	const title = [eventName(event), event.year].filter(Boolean).join(" ");
+	return `<span class="badge event" title="${esc(title)}">${esc(label)}</span>`;
+}
+
+// Fill an event dropdown with the events present in one view's rows, keeping
+// the current choice when the same option still exists after a reload.
+function populateEventSelect(select, rows) {
+	const events = new Map();
+	for (const row of rows) {
+		const event = eventOf(row);
+		if (!event?.name) continue;
+		const key = String(event.name).toLowerCase();
+		if (!events.has(key)) {
+			events.set(key, { name: key, acronym: eventAcronym(event) });
+		}
+	}
+	const options = [...events.values()].sort(
+		(a, b) =>
+			a.acronym.localeCompare(b.acronym) || a.name.localeCompare(b.name),
+	);
+	const previous = select.value;
+	select.innerHTML =
+		'<option value="">all events</option>' +
+		options
+			.map(
+				(event) =>
+					`<option value="${esc(event.name)}">${esc(`${event.acronym} · ${eventName(event)}`)}</option>`,
+			)
+			.join("");
+	if ([...select.options].some((option) => option.value === previous)) {
+		select.value = previous;
+	}
+}
+
+function eventMatches(row, event) {
+	if (!event) return true;
+	const value = eventOf(row);
+	return !!value && String(value.name).toLowerCase() === event;
+}
+
 function makeChart(canvasId, config) {
 	if (charts[canvasId]) charts[canvasId].destroy();
 	charts[canvasId] = new Chart($(canvasId), config);
@@ -818,12 +947,14 @@ const listingSort = wireColumnSort("listings", {
 });
 
 async function loadListings() {
-	listingsCache = await api("/api/listings");
+	const [rows] = await Promise.all([api("/api/listings"), loadEventIndex()]);
+	listingsCache = rows;
 	const types = [...new Set(listingsCache.map((l) => l.item_type))].sort();
 	const sel = $("#ls-type");
 	sel.innerHTML =
 		'<option value="">all types</option>' +
 		types.map((t) => `<option>${esc(t)}</option>`).join("");
+	populateEventSelect($("#ls-event"), listingsCache);
 	renderListings();
 }
 
@@ -831,10 +962,12 @@ function renderListings() {
 	const { order, dir } = listingSort;
 	const q = $("#ls-q").value.trim().toLowerCase();
 	const type = $("#ls-type").value;
+	const event = $("#ls-event").value;
 	const rows = sortedRows(
 		listingsCache.filter(
 			(l) =>
 				(!type || l.item_type === type) &&
+				eventMatches(l, event) &&
 				(!q ||
 					l.item_id.toLowerCase().includes(q) ||
 					(l.name && l.name.toLowerCase().includes(q))),
@@ -849,7 +982,7 @@ function renderListings() {
 	$("#listings-body").innerHTML = rows
 		.map(
 			(l) => `<tr>
-        <td>${itemName(l)} ${rarityTag(l)}</td>
+        <td>${itemName(l)} ${rarityTag(l)} ${eventTag(eventOf(l))}</td>
         <td>${esc(l.item_type)}</td>
         <td class="num">${l.item_level}</td>
         <td class="num">${l.item_count}</td>
@@ -864,6 +997,7 @@ function renderListings() {
 // keystroke rebuilt the whole table of ~1,800 rows.
 $("#ls-q").addEventListener("input", debounce(renderListings, 120));
 $("#ls-type").addEventListener("change", renderListings);
+$("#ls-event").addEventListener("change", renderListings);
 
 /* --- best sellers -------------------------------------------------------- */
 
@@ -927,17 +1061,19 @@ function renderBestSellersChart(rows) {
 }
 
 function renderBestSellers() {
+	const event = $("#bs-event").value;
 	const rows = sortedRows(
-		bestSellerCache,
+		bestSellerCache.filter((r) => eventMatches(r, event)),
 		bestSort.order,
 		bestSort.dir,
 		BEST_SELLER_SORTS,
 	);
+	$("#bs-count").textContent = `${rows.length} / ${bestSellerCache.length} items`;
 	$("#best-body").innerHTML =
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)} ${rarityTag(r)}</td>
+        <td>${itemName(r)} ${rarityTag(r)} ${eventTag(eventOf(r))}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -958,9 +1094,13 @@ function renderBestSellers() {
 // every header click. The response is memoized per URL, so an already-loaded
 // Overview tab costs no second request.
 async function loadBestSellersTab() {
-	bestSellerCache = await api(BEST_SELLERS_URL);
+	const [rows] = await Promise.all([api(BEST_SELLERS_URL), loadEventIndex()]);
+	bestSellerCache = rows;
+	populateEventSelect($("#bs-event"), bestSellerCache);
 	renderBestSellers();
 }
+
+$("#bs-event").addEventListener("change", renderBestSellers);
 
 const bestSort = wireColumnSort("best-sellers", {
 	order: "median_time",
@@ -1043,12 +1183,16 @@ function discountOf(row) {
 
 function renderBestValue() {
 	const definition = VALUE_DEFINITIONS[valueDefinition];
+	const event = $("#value-event").value;
 	const rows = sortedRows(
-		valueCache.filter(definition.filter),
+		valueCache.filter(
+			(row) => definition.filter(row) && eventMatches(row, event),
+		),
 		valueSort.order,
 		valueSort.dir,
 		VALUE_SORTS,
 	);
+	$("#value-count").textContent = `${rows.length} / ${valueCache.length} items`;
 	const value = (r) =>
 		definition.metric === "discount"
 			? fmtDiscount(r.discount)
@@ -1057,7 +1201,7 @@ function renderBestValue() {
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)}</td>
+        <td>${itemName(r)} ${eventTag(eventOf(r))}</td>
         <td>${esc(r.type || "—")}</td>
         <td>${rarityTag(r)}</td>
         <td class="num">${fmtPrice(r.craft_cost)}</td>
@@ -1074,12 +1218,16 @@ function renderBestValue() {
 // One request feeds the whole tab; the definition and every column header
 // re-sort the cached rows instead of re-querying the API.
 async function loadBestValueTab() {
-	valueCache = (await api("/api/best-value")).map((row) => ({
+	const [rows] = await Promise.all([api("/api/best-value"), loadEventIndex()]);
+	valueCache = rows.map((row) => ({
 		...row,
 		discount: discountOf(row),
 	}));
+	populateEventSelect($("#value-event"), valueCache);
 	renderBestValue();
 }
+
+$("#value-event").addEventListener("change", renderBestValue);
 
 const valueSort = wireColumnSort("best-value", {
 	order: "value_ratio",
@@ -1113,15 +1261,27 @@ $("#value-definition").addEventListener("change", (e) => {
 
 /* --- not on sale --------------------------------------------------------- */
 
+let nosCache = [];
+
 async function loadNotOnSale() {
-	const rows = await api(
-		"/api/not-on-sale" + orderQuery(nosSort.order, nosSort.dir),
-	);
+	const [rows] = await Promise.all([
+		api("/api/not-on-sale" + orderQuery(nosSort.order, nosSort.dir)),
+		loadEventIndex(),
+	]);
+	nosCache = rows;
+	populateEventSelect($("#nos-event"), nosCache);
+	renderNotOnSale();
+}
+
+function renderNotOnSale() {
+	const event = $("#nos-event").value;
+	const rows = nosCache.filter((row) => eventMatches(row, event));
+	$("#nos-count").textContent = `${rows.length} / ${nosCache.length} items`;
 	$("#nos-body").innerHTML =
 		rows
 			.map(
 				(r) => `<tr>
-        <td>${itemName(r)} ${rarityTag(r)}</td>
+        <td>${itemName(r)} ${rarityTag(r)} ${eventTag(eventOf(r))}</td>
         <td>${esc(r.item_type)}</td>
         <td class="num">${r.item_level}</td>
         <td>${esc(r.rarity || "—")}</td>
@@ -1135,6 +1295,8 @@ async function loadNotOnSale() {
 			.join("") ||
 		'<tr><td colspan="9" class="muted">nothing here — every known item is currently listed</td></tr>';
 }
+
+$("#nos-event").addEventListener("change", renderNotOnSale);
 
 const nosSort = wireColumnSort("not-on-sale", {
 	order: "median_unit_price",
@@ -1283,7 +1445,10 @@ function renderItemImage(it) {
 }
 
 async function loadItem(itemId) {
-	const it = await api("/api/item/" + encodeURIComponent(itemId));
+	const [it] = await Promise.all([
+		api("/api/item/" + encodeURIComponent(itemId)),
+		loadEventIndex(),
+	]);
 	// Each item is its own page, so it gets its own document title.
 	document.title = `${it.name || it.item_id} — Merchant Zeno`;
 	$("#item-title").textContent = it.name || it.item_id;
@@ -1293,6 +1458,8 @@ async function loadItem(itemId) {
 	if (it.craftable) meta += ` ${craftableBadge(it.craftable)}`;
 	if (it.civilization) meta += ` · ${esc(it.civilization)}`;
 	if (it.age != null) meta += ` · age ${it.age}`;
+	const itemEvent = eventOf(it);
+	if (itemEvent) meta += ` · ${eventTag(itemEvent)}`;
 	$("#item-meta").innerHTML = meta;
 	$("#item-desc").textContent = it.description || "";
 	$("#item-desc").hidden = !it.description;

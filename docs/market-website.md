@@ -155,12 +155,12 @@ time it is opened, and an item page loads only that item.
 |---|---|
 | **Search** | The landing view: one box that matches a fragment of an item id or display name against the curated catalog — so an item nobody is selling still turns up, marked *not listed* — and lists the matches with their current median unit price (or the historical median when unlisted) and active-listing count. While the user types, a suggestion box lists catalog matches (name, type, rarity) and can be driven with the arrow keys and Enter. The matching happens entirely in the browser against one compact catalog index (`/static/suggestions.json`), so a keystroke makes no API request and never touches the snapshot database; submitting the form is what reads market data. |
 | **Overview** | KPI cards (active listings, distinct items, snapshot count, last snapshot), market supply over time, current price distribution (log-scale bins), listings by type and by rarity, the fastest sellers by median time-to-sale, and the biggest median-price movers between the last two snapshots. |
-| **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type filter and sortable columns. Every item name links to that item's own page. |
-| **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell, omitting items with too few observed sales to rank. Orderable by median/min/max time, sales count, rarity, current price and more. The fastest are charted on the **Overview** tab. |
-| **Best value** | Three definitions over the same craftable rows, chosen from a **Definition** selector: *Crafting value* (unit price ÷ crafting cost, above 1×, best first), *Crafted deals* (currently listed below the crafting cost, cheapest first), and *Historical discount* (cheaper than usual: currently listed below the item's typical price, biggest saving first). The selected definition's explanation is hidden until the selector is used, so the tab opens as a table. An item with no current listing is priced off its historical median and marked *not listed*. Orderable by item, type, rarity, cost, current price, historical median, ratio/discount and availability. |
-| **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. Orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
+| **Listings** | Every active listing of the latest snapshot with its catalog display name and rarity, with client-side search (id or name), type and event filters and sortable columns. Event items show their acronym and year (SE, HE, WE); the event filter is built from the events present in the latest snapshot, so it also covers items whose event the catalog did not record but whose id carries the acronym. Every item name links to that item's own page. |
+| **Best sellers** | Items ranked by **time-to-sale** (fastest first): how quickly their listings sell, omitting items with too few observed sales to rank. A client-side **event** filter narrows the table; it is orderable by median/min/max time, sales count, rarity, current price and more. The fastest are charted on the **Overview** tab. |
+| **Best value** | Three definitions over the same craftable rows, chosen from a **Definition** selector: *Crafting value* (unit price ÷ crafting cost, above 1×, best first), *Crafted deals* (currently listed below the crafting cost, cheapest first), and *Historical discount* (cheaper than usual: currently listed below the item's typical price, biggest saving first). The selected definition's explanation is hidden until the selector is used, so the tab opens as a table. An **event** filter narrows the same rows in the browser. An item with no current listing is priced off its historical median and marked *not listed*. Orderable by item, type, rarity, cost, current price, historical median, ratio/discount and availability. |
+| **Not on sale** | Items seen in past snapshots that have **no active listing right now** — what you could list. A client-side **event** filter narrows the table; orderable by median price, rarity, level, times listed, last seen, min/max price (click the column headers). |
 | **Recently removed** | Listings that vanished, classified like the observer: `EXPIRED` (timed out with < 1 day left) vs `REMOVED` (sold or withdrawn — indistinguishable). A **frame** selector switches between the delta of the last two snapshots and a time window (`1h`/`4h`/`8h`/`1d`/`5d`) back from the latest snapshot. |
-| **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age and the catalog description above the charts — a **Crafting** card (recipe materials with amounts and a cost estimate) when a design produces it, a **Dismantle** card listing the materials the Gear Dismantler yields, a median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. Material icons link to their own item page and name themselves on hover. |
+| **Item detail** | Full price history of one item at its own page (`/item/<item_id>`) — its icon, display name, raw id, kind, rarity, civilization/age, seasonal event and the catalog description above the charts — a **Crafting** card (recipe materials with amounts and a cost estimate) when a design produces it, a **Dismantle** card listing the materials the Gear Dismantler yields, a median line per snapshot overlaid with the individual listing price points, a historical price histogram, and the current listings. Material icons link to their own item page and name themselves on hover. |
 
 Every sortable table shares one interaction: click a column header to sort
 min-first (↑), click it again for max-first (↓), and a third time to return
@@ -250,6 +250,20 @@ read-side `expires_at` (the wire `Listing` keeps only `seconds_till_expiry`).
   **recipe** (`school`, `level`, and the ingredients with their quantities).
   These fields ride along on the listing and item
   rows, and the listings search matches the display name as well as the raw id.
+- **Seasonal events** — the catalog names the three seasonal events
+  (`summer`, `halloween`, `winter`); the dashboard labels them with the
+  acronyms players use — **SE**, **HE** and **WE**.  Event filtering is a
+  **front-end feature** and the API is unchanged: `/static/events.json` is a
+  compact committed index (`{item id: {name, year?, acronym}}`, generated by
+  `scripts.build_events`) that the browser loads once for the item-list tabs.
+  It covers the catalog's event metadata plus items whose catalog entry has no
+  event but whose id encodes one (`SE2025_…`, `HE_Blackwood`,
+  `WE_IceKingsHeart`, `Axe2H_Halloween2020`, `CreateArmorBldg_Winter2021`,
+  `…_IceKing_LEG`, and event vanity items named Halloween/Winter/Summer).
+  The browser applies the same id heuristic to ids the index has never seen,
+  so a brand-new event item still filters correctly; the **Listings**, **Best
+  sellers**, **Best value** and **Not on sale** tabs then filter their cached
+  rows locally, without an extra request.
 - **Craftability** — an item is `craftable` when a crafting **design** produces
   it: the generated catalog marks every id that appears as a design's
   `outputId` (see `aoeo_market.catalog.is_craftable`).  The flag rides along on
@@ -404,7 +418,11 @@ than asking the API to re-sort on every column click:
   memoized best-sellers response as the table, so the two never disagree and
   opening both tabs costs one request.
 - The listings filter box is debounced by 120 ms: without it each keystroke
-  rebuilt the whole table of ~1,800 rows.
+  rebuilt the whole table of ~1,800 rows.  The type and event dropdowns filter
+  that same cached array, and the Best sellers, Best value and Not on sale
+  event dropdowns filter their own cached response; choosing an event costs no
+  request.  The event metadata itself is one small static index
+  (`/static/events.json`) fetched once and kept for the life of the page.
 - The search box's type-ahead runs in the browser: `/static/suggestions.json` is
   fetched once (on focus, before the first keystroke), then every query is a
   local match with the same ranking as `/api/search`. Typing therefore makes no

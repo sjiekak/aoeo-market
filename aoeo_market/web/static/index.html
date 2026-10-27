@@ -191,6 +191,9 @@
 					<select id="ls-type">
 						<option value="">all types</option>
 					</select>
+					<select id="ls-event" aria-label="Filter listings by event">
+						<option value="">all events</option>
+					</select>
 					<span id="ls-count" class="muted"></span>
 				</div>
 				<div class="card">
@@ -230,6 +233,12 @@
 					first. Click a column header to sort: min first (↑), then max (↓),
 					then unsorted.
 				</p>
+				<div class="controls">
+					<select id="bs-event" aria-label="Filter best sellers by event">
+						<option value="">all events</option>
+					</select>
+					<span id="bs-count" class="muted"></span>
+				</div>
 				<div class="card">
 					<h2>
 						All items with observed sales
@@ -301,6 +310,10 @@
 								Historical discount — cheaper than usual
 							</option>
 						</select>
+						<select id="value-event" aria-label="Filter best value by event">
+							<option value="">all events</option>
+						</select>
+						<span id="value-count" class="muted"></span>
 					</div>
 					<p
 						id="value-definition-text"
@@ -355,6 +368,12 @@
 
 			<!-- Not on sale -->
 			<section id="tab-not-on-sale" hidden>
+				<div class="controls">
+					<select id="nos-event" aria-label="Filter items not on sale by event">
+						<option value="">all events</option>
+					</select>
+					<span id="nos-count" class="muted"></span>
+				</div>
 				<div class="card">
 					<h2>
 						Items with no active listing right now
