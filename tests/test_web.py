@@ -500,6 +500,80 @@ def test_static_files_served_by_extension(tmp_path, monkeypatch):
     assert app.handle("/static/sprites/missing.webp")[0] == 404
 
 
+def test_event_filters_are_front_end_only(tmp_path):
+    """All four item lists filter the API rows in the browser by event.
+
+    The server answers only the ordinary listing/view payloads; each row
+    carries its event, and filtering happens over the cached rows.
+    """
+    app = app_for(tmp_path)
+    _, _, html = app.handle("/")
+    _, _, js = app.handle("/static/app.js")
+
+    for select_id in (b"ls-event", b"bs-event", b"value-event", b"nos-event"):
+        assert b'id="' + select_id + b'"' in html
+    assert b"eventMatches" in js and b"row?.event" in js
+    assert b"?event=" not in js  # no event query parameter: filtering is local
+    # No per-event static index or front-end id heuristic: the API resolves it.
+    assert app.handle("/static/events.json")[0] == 404
+    assert b"loadEventIndex" not in js
+    assert b"eventFromId" not in js
+
+
+def test_event_is_propagated_on_every_item_row(tmp_path):
+    """The backend resolves the event, so any view can filter it locally."""
+    import json
+
+    from aoeo_market import catalog
+
+    db = tmp_path / "events.db"
+    recipe = catalog.recipe_of("armorbldg_winter2021") or {}
+    materials = [mk(10 + i, item_id=m["id"], item_type="Material", price=1, expiry=200_000) for i, m in enumerate(recipe.get("materials", []))]
+    event_items = [
+        mk(1, item_id="Axe2H_Halloween2020", item_type="Item", price=100, expiry=200_000),
+        mk(2, item_id="CreateArmorBldg_Winter2021", item_type="Design", price=100, expiry=200_000),
+        mk(3, item_id="armorbldg_winter2021", item_type="Item", price=2000, expiry=200_000),
+        *materials,
+    ]
+    conn = store.open_store(db)
+    # The warm-up snapshot keeps the event item out of the left-censored first
+    # one, so its disappearance counts as a fully observed sale.
+    store.record_snapshot(conn, [mk(99, item_id="Warm_U_I", price=10, expiry=200_000)], captured_at=0.0)
+    store.record_snapshot(conn, event_items, captured_at=1000.0)
+    kept = [item for item in event_items if item.item_id != "Axe2H_Halloween2020"]
+    store.record_snapshot(conn, kept, captured_at=2000.0)
+    store.record_snapshot(conn, kept, captured_at=3000.0)
+    conn.close()
+    app = WebApp(str(db))
+
+    def payload(path, query=None):
+        status, _, body = app.handle(path, query or {})
+        assert status == 200, path
+        return json.loads(body)
+
+    listings = {row["item_id"]: row for row in payload("/api/listings")}
+    assert listings["CreateArmorBldg_Winter2021"]["event"] == {"name": "winter", "year": 2021}
+    assert "event" not in listings["4whitehoney"]
+
+    sellers = {row["item_id"]: row for row in payload("/api/best-sellers")}
+    assert sellers["Axe2H_Halloween2020"]["event"] == {"name": "halloween", "year": 2020}
+
+    not_on_sale = {row["item_id"]: row for row in payload("/api/not-on-sale")}
+    assert not_on_sale["Axe2H_Halloween2020"]["event"] == {"name": "halloween", "year": 2020}
+
+    removed = payload("/api/recently-removed", {"window": ["86400"]})
+    assert next(row for row in removed if row["item_id"] == "Axe2H_Halloween2020")["event"] == {"name": "halloween", "year": 2020}
+
+    values = {row["item_id"]: row for row in payload("/api/best-value")}
+    assert values["armorbldg_winter2021"]["event"] == {"name": "winter", "year": 2021}
+
+    search = payload("/api/search", {"q": ["createarmorbldg_winter2021"]})
+    assert search[0]["event"] == {"name": "winter", "year": 2021}
+
+    detail = payload("/api/item/armorbldg_winter2021")
+    assert detail["event"] == {"name": "winter", "year": 2021}
+
+
 def test_not_on_sale_endpoint(tmp_path):
     _, _, body = app_for(tmp_path).handle("/api/not-on-sale", {"order": ["median_unit_price"], "dir": ["desc"]})
     assert "Axe_R_I" in body.decode()

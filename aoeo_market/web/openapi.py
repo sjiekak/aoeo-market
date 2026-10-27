@@ -152,9 +152,12 @@ def _item_summary_schema() -> dict:
             "age": {"type": "string"},
             "event": {
                 "type": "object",
-                "description": "Seasonal event the item belongs to.",
-                "properties": {"name": {"type": "string"}, "year": {"type": "integer"}},
-                "required": ["name", "year"],
+                "description": "Seasonal event the item belongs to, resolved by the backend; omitted for ordinary items.",
+                "properties": {
+                    "name": {"type": "string", "description": "Event name: summer, halloween or winter."},
+                    "year": {"type": "integer", "description": "Event year, when the curated catalog records one."},
+                },
+                "required": ["name"],
             },
         },
         ["item_id", "name", "rarity", "rarity_rank"],
