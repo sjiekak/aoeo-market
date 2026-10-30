@@ -38,6 +38,30 @@ def test_name_of():
     assert catalog.name_of("unknown-id") is None
 
 
+def test_event_of_prefers_the_catalog_then_reads_the_id():
+    """The backend resolves an event for every item, not just tagged ones."""
+    assert catalog.event_of("armorplt_halloween2025") == {"name": "halloween", "year": 2025}
+    assert catalog.event_of("se2019_armormed") == {"name": "summer", "year": 2019}
+    # The catalog records no event, but the id encodes one.
+    assert catalog.event_of("CreateArmorBldg_Winter2021") == {"name": "winter", "year": 2021}
+    assert catalog.event_of("SE2025_NewItem") == {"name": "summer", "year": 2025}
+    assert catalog.event_of("HE_NewItem") == {"name": "halloween"}
+    assert catalog.event_of("IceKing_LEG") == {"name": "winter"}
+    # A vanity item's name can name its event.
+    assert catalog.event_of("vanityhelm_021") == {"name": "halloween"}
+    # Ordinary and unknown items have no event.
+    assert catalog.event_of("Xerxes_L_IV") is None
+    assert catalog.event_of("does-not-exist") is None
+
+
+def test_event_rides_along_with_the_catalog_fields():
+    """Every item row helper carries the event when the item has one."""
+    assert catalog.fields("armorplt_halloween2025")["event"] == {"name": "halloween", "year": 2025}
+    assert catalog.icon_fields("CreateArmorBldg_Winter2021")["event"] == {"name": "winter", "year": 2021}
+    assert "event" not in catalog.fields("Xerxes_L_IV")
+    assert "event" not in catalog.icon_fields("4PureGoldIngot")
+
+
 def test_is_craftable_matches_a_design_output():
     # A material produced by the "Pure Gold Ingots" design is craftable.
     assert catalog.is_craftable("4PureGoldIngot") is True
