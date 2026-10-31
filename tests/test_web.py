@@ -514,6 +514,8 @@ def test_event_filters_are_front_end_only(tmp_path):
         assert b'id="' + select_id + b'"' in html
     assert b"eventMatches" in js and b"row?.event" in js
     assert b"?event=" not in js  # no event query parameter: filtering is local
+    # A badge identifies the event, not one of its yearly editions.
+    assert b"event.year" not in js
     # No per-event static index or front-end id heuristic: the API resolves it.
     assert app.handle("/static/events.json")[0] == 404
     assert b"loadEventIndex" not in js

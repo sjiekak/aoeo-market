@@ -145,13 +145,13 @@ function eventOf(row) {
 	return { ...event, acronym: eventAcronym(event) };
 }
 
-// The event as it appears beside an item name: its acronym and year (SE 2025),
-// with the full event name in the tooltip.  Nothing for ordinary items.
+// The event as it appears beside an item name: the player-facing acronym (SE),
+// with the full event name in the tooltip.  The year is deliberately left out:
+// a badge identifies the event, not one of its yearly editions.  Nothing for
+// ordinary items.
 function eventTag(event) {
 	if (!event?.name) return "";
-	const label = [eventAcronym(event), event.year].filter(Boolean).join(" ");
-	const title = [eventName(event), event.year].filter(Boolean).join(" ");
-	return `<span class="badge event" title="${esc(title)}">${esc(label)}</span>`;
+	return `<span class="badge event" title="${esc(eventName(event))}">${esc(eventAcronym(event))}</span>`;
 }
 
 // Fill an event dropdown with the events present in one view's rows, keeping

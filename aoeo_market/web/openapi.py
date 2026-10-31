@@ -155,7 +155,7 @@ def _item_summary_schema() -> dict:
                 "description": "Seasonal event the item belongs to, resolved by the backend; omitted for ordinary items.",
                 "properties": {
                     "name": {"type": "string", "description": "Event name: summer, halloween or winter."},
-                    "year": {"type": "integer", "description": "Event year, when the curated catalog records one."},
+                    "year": {"type": "integer", "description": "Event year, when known."},
                 },
                 "required": ["name"],
             },
